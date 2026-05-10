@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supprimer mon compte — PixelNight</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #ffffff;
+      color: #111111;
+      line-height: 1.7;
+      font-size: 16px;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #0f0f1a;
+      padding: 36px 24px 28px;
+      text-align: center;
+    }
+
+    .logo {
+      display: inline-block;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 3px;
+      color: #ffffff;
+    }
+
+    .logo span { color: #e94560; }
+
+    .logo-sub {
+      margin-top: 6px;
+      color: #888888;
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    /* ── Container ── */
+    main {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h1 {
+      font-size: 26px;
+      font-weight: 800;
+      color: #0f0f1a;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: #777777;
+      margin-bottom: 40px;
+      padding-bottom: 24px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+
+    section { margin-bottom: 40px; }
+
+    h2 {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0f0f1a;
+      margin-bottom: 12px;
+      padding-left: 12px;
+      border-left: 4px solid #e94560;
+    }
+
+    p { margin-bottom: 10px; color: #333333; }
+
+    ul {
+      margin: 8px 0 10px 20px;
+      color: #333333;
+    }
+
+    ul li { margin-bottom: 5px; }
+
+    /* ── Steps ── */
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      margin: 16px 0;
+      padding: 0;
+    }
+
+    .steps li {
+      counter-increment: step;
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .steps li::before {
+      content: counter(step);
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: #e94560;
+      color: #ffffff;
+      font-weight: 800;
+      font-size: 14px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+    }
+
+    .steps li p { margin: 0; }
+
+    /* ── Warning box ── */
+    .box-warning {
+      background: #fff8f9;
+      border: 1px solid #f5c6ce;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin: 12px 0;
+      font-size: 14px;
+      color: #555555;
+    }
+
+    .box-warning strong { color: #e94560; }
+
+    /* ── Data table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+
+    th {
+      background: #0f0f1a;
+      color: #ffffff;
+      text-align: left;
+      padding: 10px 14px;
+      font-weight: 600;
+    }
+
+    td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #eeeeee;
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td { background: #f9f9f9; }
+
+    .badge-deleted {
+      display: inline-block;
+      background: #fde8ec;
+      color: #e94560;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+
+    .badge-kept {
+      display: inline-block;
+      background: #eef9f2;
+      color: #2a7a4a;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+
+    /* ── CTA email ── */
+    .cta-block {
+      background: #0f0f1a;
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 28px 24px;
+      margin-top: 12px;
+      text-align: center;
+    }
+
+    .cta-block p { color: #cccccc; margin-bottom: 6px; }
+
+    .cta-mailto {
+      display: inline-block;
+      margin-top: 16px;
+      background: #e94560;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 15px;
+      padding: 12px 28px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+      transition: background 0.15s;
+    }
+
+    .cta-mailto:hover { background: #c73050; }
+
+    .cta-details {
+      margin-top: 16px;
+      font-size: 13px;
+      color: #888888;
+    }
+
+    .cta-details strong { color: #ffffff; }
+
+    /* ── Footer ── */
+    footer {
+      background: #f5f5f5;
+      border-top: 1px solid #e0e0e0;
+      text-align: center;
+      padding: 24px;
+      font-size: 12px;
+      color: #999999;
+    }
+
+    footer a { color: #e94560; text-decoration: none; }
+    footer strong { color: #0f0f1a; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">&lt;PIXEL <span>NIGHT</span>&gt;</div>
+    <div class="logo-sub">Devine le jeu du jour</div>
+  </header>
+
+  <!-- ── Contenu ────────────────────────────────────────────────────────── -->
+  <main>
+
+    <h1>Supprimer mon compte PixelNight</h1>
+    <p class="subtitle">
+      Vous pouvez demander la suppression définitive de votre compte et de toutes
+      vos données personnelles à tout moment, sans justification.
+    </p>
+
+    <!-- 1 – Comment faire -->
+    <section>
+      <h2>Comment faire la demande</h2>
+      <p>La suppression se fait par e-mail en 3 étapes :</p>
+      <ol class="steps">
+        <li>
+          <p>
+            Envoyez un e-mail à <strong>PixelNight04@gmail.com</strong>
+            avec l'objet exact : <strong>« Suppression de compte »</strong>.
+          </p>
+        </li>
+        <li>
+          <p>
+            Dans le corps du message, indiquez votre <strong>pseudo PixelNight</strong>
+            (le nom affiché dans le classement) et l'adresse e-mail associée à votre compte.
+          </p>
+        </li>
+        <li>
+          <p>
+            Vous recevrez une confirmation par e-mail une fois votre compte supprimé.
+            Le délai de traitement est de <strong>48 heures maximum</strong>.
+          </p>
+        </li>
+      </ol>
+
+      <div class="cta-block">
+        <p>Cliquez ci-dessous pour ouvrir directement votre messagerie :</p>
+        <a
+          class="cta-mailto"
+          href="mailto:PixelNight04@gmail.com?subject=Suppression%20de%20compte&body=Bonjour%2C%0A%0AJe%20souhaite%20supprimer%20mon%20compte%20PixelNight.%0A%0APseudo%20%3A%20%5Bvotre%20pseudo%5D%0AEmail%20du%20compte%20%3A%20%5Bvotre%20email%5D%0A%0AMerci."
+        >
+          ✉ Envoyer la demande
+        </a>
+        <p class="cta-details">
+          <strong>Objet :</strong> Suppression de compte<br />
+          <strong>À :</strong> PixelNight04@gmail.com
+        </p>
+      </div>
+    </section>
+
+    <!-- 2 – Données supprimées -->
+    <section>
+      <h2>Données supprimées</h2>
+      <p>Une fois votre demande traitée, les données suivantes sont <strong>définitivement et irrévocablement supprimées</strong> :</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Donnée</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Adresse e-mail</td>
+            <td><span class="badge-deleted">Supprimée</span></td>
+          </tr>
+          <tr>
+            <td>Pseudo (nom d'affichage)</td>
+            <td><span class="badge-deleted">Supprimé</span></td>
+          </tr>
+          <tr>
+            <td>Scores et position au classement</td>
+            <td><span class="badge-deleted">Supprimés</span></td>
+          </tr>
+          <tr>
+            <td>Historique de jeu quotidien</td>
+            <td><span class="badge-deleted">Supprimé</span></td>
+          </tr>
+          <tr>
+            <td>Série (streak) et statistiques</td>
+            <td><span class="badge-deleted">Supprimées</span></td>
+          </tr>
+          <tr>
+            <td>Pièces et cosmétiques achetés</td>
+            <td><span class="badge-deleted">Supprimés</span></td>
+          </tr>
+          <tr>
+            <td>Données anonymes agrégées*</td>
+            <td><span class="badge-kept">Conservées</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p style="font-size: 13px; color: #777777;">
+        * Des statistiques globales entièrement anonymisées (ex. : nombre total de parties jouées)
+        peuvent être conservées à des fins de maintenance. Aucune donnée permettant de vous
+        identifier n'est retenue.
+      </p>
+
+      <div class="box-warning">
+        <strong>⚠ Attention :</strong> la suppression est définitive. Votre progression,
+        vos pièces et vos cosmétiques ne pourront pas être récupérés après la suppression.
+        Si vous souhaitez simplement vous déconnecter, utilisez le bouton
+        « Se déconnecter » dans l'application.
+      </div>
+    </section>
+
+    <!-- 3 – Délai -->
+    <section>
+      <h2>Délai de traitement</h2>
+      <p>
+        Votre demande sera traitée dans un délai de <strong>48 heures</strong> suivant
+        la réception de votre e-mail. Vous recevrez une confirmation à l'adresse
+        depuis laquelle vous avez envoyé la demande.
+      </p>
+      <p>
+        Conformément au RGPD, ce délai peut être étendu à <strong>30 jours</strong>
+        en cas de volume important de demandes, auquel cas vous en serez informé.
+      </p>
+    </section>
+
+    <!-- 4 – Autres droits -->
+    <section>
+      <h2>Autres droits sur vos données</h2>
+      <p>En dehors de la suppression, vous disposez également des droits suivants :</p>
+      <ul>
+        <li><strong>Rectification</strong> — corriger votre pseudo ou votre pays depuis le profil de l'app ;</li>
+        <li><strong>Accès</strong> — obtenir une copie de vos données en envoyant un e-mail avec l'objet « Accès à mes données » ;</li>
+        <li><strong>Portabilité</strong> — recevoir vos données dans un format structuré ;</li>
+        <li><strong>Opposition</strong> — vous opposer à l'affichage de publicités personnalisées depuis les paramètres Android.</li>
+      </ul>
+      <p>
+        Pour toute question, contactez-nous à
+        <a href="mailto:PixelNight04@gmail.com" style="color: #e94560; font-weight: 700;">PixelNight04@gmail.com</a>.
+        Vous pouvez également introduire une réclamation auprès de la
+        <a href="https://www.cnil.fr" target="_blank" rel="noopener" style="color: #e94560;">CNIL</a>.
+      </p>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ─────────────────────────────────────────────────────────── -->
+  <footer>
+    <p><strong>PixelNight</strong> · Suppression de compte · Version 1.0 · Avril 2026</p>
+    <p style="margin-top: 6px;">
+      Contact : <a href="mailto:PixelNight04@gmail.com">PixelNight04@gmail.com</a>
+      &nbsp;·&nbsp;
+      <a href="privacy-policy.html">Politique de confidentialité</a>
+    </p>
+  </footer>
+
+</body>
+</html>

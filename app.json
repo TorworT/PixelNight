@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "PixelNight",
+    "slug": "pixelnight",
+    "description": "Devine le jeu vidéo du jour à partir de captures pixelisées. Un nouveau défi chaque jour !",
+    "version": "1.0.2",
+    "runtimeVersion": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f0f1a"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/5d9cebf3-b4d3-4b3c-9d74-cb803ab9e795",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "channel": "production"
+    },
+
+    "plugins": [
+      "expo-updates",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0f0f1a",
+          "defaultChannel": "default",
+          "androidMode": "default",
+          "androidCollapsedTitle": "PixelNight"
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-5431544837646381~7003677644",
+          "delayAppMeasurementInit": true,
+          "userTrackingUsageDescription": "Cette app affiche des publicités personnalisées."
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.pixelnight.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f0f1a"
+      },
+      "package": "com.pixelnight.app",
+      "versionCode": 3,
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5d9cebf3-b4d3-4b3c-9d74-cb803ab9e795"
+      }
+    }
+  }
+}
