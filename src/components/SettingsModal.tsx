@@ -19,12 +19,26 @@ import {
 } from '../lib/notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import * as Updates from 'expo-updates';
 import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
 import { AboutScreen } from '../screens/AboutScreen';
 import { PrivacyPolicyScreen } from '../screens/PrivacyPolicyScreen';
 import { TermsScreen } from '../screens/TermsScreen';
+import { BUILD_DATE_ISO } from '../lib/buildInfo';
 
 const APP_VERSION = '1.0.2';
+
+// ─── Build info ───────────────────────────────────────────────────────────────
+
+/** Formate '2026-05-10T18:30:00.000Z' → '10/05/2026 18:30' (heure locale) */
+function formatBuildDate(iso: string): string {
+  const d   = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const BUILD_DATE    = formatBuildDate(BUILD_DATE_ISO);
+const BUILD_CHANNEL = Updates.channel ?? 'dev';
 const KOFI_URL    = 'https://ko-fi.com/pixelnight'; // Remplace par ton URL Ko-fi réel
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -189,6 +203,9 @@ export function SettingsModal({ visible, onDismiss }: Props) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.infoLabel}>Version</Text>
                 <Text style={styles.infoValue}>PixelNight v{APP_VERSION}</Text>
+                <Text style={styles.buildInfo}>
+                  build {BUILD_DATE} · {BUILD_CHANNEL}
+                </Text>
               </View>
             </View>
 
@@ -359,6 +376,14 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: FONTS.size.sm,
     fontWeight: FONTS.weight.medium,
+  },
+  buildInfo: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontFamily: 'monospace',
+    letterSpacing: 0.3,
+    marginTop: 3,
+    opacity: 0.75,
   },
 
   settingRow: {

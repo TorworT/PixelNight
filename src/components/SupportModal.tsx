@@ -42,7 +42,8 @@ const SUPPORT_CATS: SupportCategory[] = [
   { id: 'shop',    emoji: '🛒', label: 'Boutique' },
   { id: 'rank',    emoji: '🏆', label: 'Classement' },
   { id: 'profile', emoji: '👤', label: 'Profil' },
-  { id: 'other',   emoji: '🔧', label: 'Autre' },
+  { id: 'improvement', emoji: '💡', label: 'Amélioration du jeu' },
+  { id: 'other',       emoji: '🔧', label: 'Autre' },
 ];
 
 const SUPPORT_EMAIL = 'PixelNight04@gmail.com';

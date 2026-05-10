@@ -17,9 +17,7 @@
     "updates": {
       "url": "https://u.expo.dev/5d9cebf3-b4d3-4b3c-9d74-cb803ab9e795",
       "enabled": true,
-      "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0,
-      "channel": "production"
+      "checkAutomatically": "NEVER"
     },
 
     "plugins": [

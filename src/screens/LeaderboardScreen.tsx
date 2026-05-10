@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator,
+  Modal, ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Profile, getLeaderboard } from '../lib/profiles';
@@ -30,7 +31,7 @@ const LOAD_TIMEOUT_MS = 10_000;
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
-const LEADERBOARD_CACHE_KEY = 'pn_leaderboard_cache_v2';
+const LEADERBOARD_CACHE_KEY = 'pn_leaderboard_cache_v3';
 
 interface LeaderboardCache {
   data:     Profile[];
@@ -133,9 +134,10 @@ interface RowProps {
   rank:       number;
   isMe:       boolean;
   titlesMap?: Map<string, Title>;
+  onPress?:   () => void;
 }
 
-function LeaderboardRow({ profile, rank, isMe, titlesMap }: RowProps) {
+function LeaderboardRow({ profile, rank, isMe, titlesMap, onPress }: RowProps) {
   const { colors, fontFamily } = useTheme();
   const row   = useMemo(() => createRowStyles(colors, fontFamily), [colors, fontFamily]);
   const medal = rankMedal(rank);
@@ -145,7 +147,11 @@ function LeaderboardRow({ profile, rank, isMe, titlesMap }: RowProps) {
     : null;
 
   return (
-    <View style={[row.container, isMe && row.containerMe, rank <= 3 && row.containerTop]}>
+    <TouchableOpacity
+      style={[row.container, isMe && row.containerMe, rank <= 3 && row.containerTop]}
+      onPress={onPress}
+      activeOpacity={onPress ? 0.7 : 1}
+    >
       <View style={row.rankCol}>
         {medal
           ? <Text style={row.medal}>{medal}</Text>
@@ -153,7 +159,10 @@ function LeaderboardRow({ profile, rank, isMe, titlesMap }: RowProps) {
         }
       </View>
       <View style={[row.avatar, isMe && row.avatarMe]}>
-        <Text style={row.avatarText}>{profile.pseudo.slice(0, 2).toUpperCase()}</Text>
+        {profile.avatar_url && profile.avatar_url.startsWith('http')
+          ? <Image source={{ uri: profile.avatar_url }} style={{ width: 36, height: 36, borderRadius: 4 }} />
+          : <Text style={row.avatarText}>{profile.pseudo.slice(0, 2).toUpperCase()}</Text>
+        }
       </View>
       <View style={row.info}>
         <View style={row.pseudoRow}>
@@ -180,7 +189,7 @@ function LeaderboardRow({ profile, rank, isMe, titlesMap }: RowProps) {
       <Text style={[row.score, isMe && row.scoreMe]}>
         {profile.score_total.toLocaleString('fr-FR')}
       </Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -268,6 +277,375 @@ function GuestLeaderboardPlaceholder({ onSignUp }: { onSignUp: () => void }) {
   );
 }
 
+// ─── Rang du joueur ───────────────────────────────────────────────────────────
+
+const PLAYER_RANKS = [
+  { min: 10000, emoji: '👑', label: 'Légende',  color: '#fbbf24' },
+  { min: 5001,  emoji: '💎', label: 'Maître',   color: '#c084fc' },
+  { min: 2001,  emoji: '⭐', label: 'Expert',   color: '#60a5fa' },
+  { min: 501,   emoji: '🎮', label: 'Gamer',    color: '#4ade80' },
+  { min: 0,     emoji: '🌱', label: 'Débutant', color: '#6b7280' },
+] as const;
+
+function getPlayerRank(score: number) {
+  return PLAYER_RANKS.find((r) => score >= r.min) ?? PLAYER_RANKS[PLAYER_RANKS.length - 1];
+}
+
+// ─── PlayerProfileModal styles ────────────────────────────────────────────────
+
+function createModalStyles(colors: ThemeColors, ff: string | undefined) {
+  return StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.88)',
+      // Pas de justifyContent: 'flex-end' ici — c'est le backdrop (flex:1)
+      // qui pousse le sheet vers le bas naturellement.
+    },
+    sheet: {
+      backgroundColor: colors.background,
+      borderTopLeftRadius: RADIUS.xl,
+      borderTopRightRadius: RADIUS.xl,
+      maxHeight: '90%',
+      overflow: 'hidden',
+    },
+
+    // Handle
+    handle: {
+      width: 40, height: 4, borderRadius: 2,
+      backgroundColor: colors.border,
+      alignSelf: 'center',
+      marginTop: SPACING.sm,
+      marginBottom: SPACING.xs,
+    },
+
+    // Header barre
+    sheetHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    sheetTitle: {
+      color: colors.textMuted,
+      fontSize: FONTS.size.xs,
+      fontWeight: FONTS.weight.bold,
+      letterSpacing: 1.5,
+      fontFamily: ff ?? 'monospace',
+    },
+    closeBtn: { padding: SPACING.xs },
+
+    // Scroll content
+    scroll: { flex: 1 },
+    content: {
+      paddingHorizontal: SPACING.xl,
+      paddingTop: SPACING.lg,
+      paddingBottom: SPACING.xxl * 2,
+      gap: SPACING.lg,
+      alignItems: 'center',
+    },
+
+    // Carte identité
+    identityCard: {
+      width: '100%',
+      backgroundColor: colors.card,
+      borderRadius: RADIUS.xl,
+      borderWidth: 1.5,
+      alignItems: 'center',
+      paddingVertical: SPACING.xl,
+      paddingHorizontal: SPACING.xl,
+      gap: SPACING.sm,
+    },
+    avatar: {
+      width: 72, height: 72, borderRadius: 36,
+      borderWidth: 2,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    avatarText: {
+      color: '#fff',
+      fontSize: FONTS.size.xxl,
+      fontWeight: FONTS.weight.black,
+    },
+    pseudo: {
+      color: colors.text,
+      fontSize: FONTS.size.xxl,
+      fontWeight: FONTS.weight.black,
+      fontFamily: ff ?? 'monospace',
+      letterSpacing: 1,
+    },
+    rankBadge: {
+      flexDirection: 'row', alignItems: 'center', gap: SPACING.xs,
+      paddingVertical: 5, paddingHorizontal: SPACING.md,
+      borderRadius: RADIUS.full, borderWidth: 1.5,
+    },
+    rankEmoji: { fontSize: 16 },
+    rankLabel: {
+      fontSize: FONTS.size.md, fontWeight: FONTS.weight.bold,
+      fontFamily: ff ?? 'monospace',
+    },
+    titleBadge: {
+      flexDirection: 'row', alignItems: 'center', gap: 5,
+      borderRadius: RADIUS.full, paddingVertical: 4, paddingHorizontal: SPACING.sm,
+      borderWidth: 1,
+    },
+    titleBadgeText: {
+      fontSize: FONTS.size.xs, fontWeight: FONTS.weight.bold,
+      fontFamily: ff ?? 'monospace', letterSpacing: 0.5,
+    },
+    flagRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+    },
+    flagEmoji: { fontSize: 16 },
+    scoreRow: {
+      flexDirection: 'row', alignItems: 'center', gap: SPACING.xs,
+    },
+    scoreText: {
+      color: colors.warning, fontSize: FONTS.size.sm,
+      fontWeight: FONTS.weight.bold, fontFamily: ff ?? 'monospace',
+    },
+
+    // Section label
+    sectionLabel: {
+      color: colors.textMuted, fontSize: FONTS.size.xs,
+      fontWeight: FONTS.weight.bold, letterSpacing: 1.2,
+      fontFamily: ff ?? 'monospace', alignSelf: 'flex-start',
+    },
+
+    // Stats grid
+    statsGrid: {
+      flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, width: '100%',
+    },
+    statCell: {
+      flex: 1, minWidth: '45%',
+      backgroundColor: colors.card,
+      borderRadius: RADIUS.md,
+      borderWidth: 1, borderColor: colors.border,
+      alignItems: 'center',
+      paddingVertical: SPACING.md, paddingHorizontal: SPACING.sm,
+      gap: SPACING.xs,
+    },
+    statValue: {
+      color: colors.text, fontSize: FONTS.size.xl,
+      fontWeight: FONTS.weight.black, fontFamily: ff ?? 'monospace',
+    },
+    statLabel: { color: colors.textMuted, fontSize: FONTS.size.xs, textAlign: 'center' },
+
+    // Répartition
+    distContainer: {
+      width: '100%', backgroundColor: colors.card,
+      borderRadius: RADIUS.md, borderWidth: 1, borderColor: colors.border,
+      padding: SPACING.md, gap: SPACING.sm,
+    },
+    distRow:   { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+    distLabel: { color: colors.textSecondary, fontSize: FONTS.size.xs, width: 68, textAlign: 'right' },
+    distTrack: {
+      flex: 1, height: 20, backgroundColor: colors.cardAlt,
+      borderRadius: RADIUS.sm, overflow: 'hidden', justifyContent: 'center',
+    },
+    distBar:   { height: '100%', borderRadius: RADIUS.sm },
+    distCount: {
+      fontSize: FONTS.size.xs, fontWeight: FONTS.weight.bold,
+      fontFamily: ff ?? 'monospace', width: 70, textAlign: 'right',
+    },
+    distPct: { fontWeight: FONTS.weight.regular, color: colors.textMuted },
+    distEmpty: {
+      width: '100%', alignItems: 'center',
+      paddingVertical: SPACING.lg, backgroundColor: colors.card,
+      borderRadius: RADIUS.md, borderWidth: 1, borderColor: colors.border,
+    },
+    distEmptyText: { color: colors.textMuted, fontSize: FONTS.size.sm, fontStyle: 'italic' },
+  });
+}
+
+// ─── PlayerProfileModal ───────────────────────────────────────────────────────
+
+interface PlayerProfileModalProps {
+  visible:   boolean;
+  player:    Profile | null;
+  titlesMap: Map<string, Title>;
+  onClose:   () => void;
+}
+
+function PlayerProfileModal({ visible, player, titlesMap, onClose }: PlayerProfileModalProps) {
+  const { colors, fontFamily } = useTheme();
+  const s = useMemo(() => createModalStyles(colors, fontFamily), [colors, fontFamily]);
+
+  if (!player) return null;
+
+  const rank      = getPlayerRank(player.score_total);
+  const winPct    = player.parties_jouees > 0
+    ? Math.round((player.parties_gagnees / player.parties_jouees) * 100)
+    : 0;
+  const losses    = Math.max(0, player.parties_jouees - player.parties_gagnees);
+  const total     = player.parties_jouees;
+  const activeTitle = player.active_title ? titlesMap.get(player.active_title) ?? null : null;
+
+  // Couleur avatar = couleur du rang
+  const avatarColor = rank.color;
+
+  const distItems = [
+    { label: 'Victoires', count: player.parties_gagnees, color: colors.success },
+    { label: 'Défaites',  count: losses,                 color: colors.accent  },
+  ];
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={s.overlay}>
+        {/*
+          Backdrop : zone transparente AU-DESSUS du sheet.
+          flex:1 pousse le sheet vers le bas et cette zone vers le haut.
+          onPress ici ferme la modal — complètement isolé du ScrollView.
+        */}
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
+
+        {/* Sheet scrollable — aucun lien avec le TouchableOpacity ci-dessus */}
+        <ScrollView
+          style={[s.sheet, { borderColor: rank.color + '44', borderWidth: 1.5 }]}
+          contentContainerStyle={s.content}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          {/* Poignée */}
+          <View style={[s.handle, { alignSelf: 'center' }]} />
+
+          {/* Barre titre */}
+          <View style={[s.sheetHeader, { width: '100%' }]}>
+            <Text style={s.sheetTitle}>PROFIL PUBLIC</Text>
+            <TouchableOpacity style={s.closeBtn} onPress={onClose}>
+              <Ionicons name="close" size={22} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          {/* ── Contenu scrollable ──────────────────────────────── */}
+
+              {/* ── Carte identité ────────────────────────────────── */}
+              <View style={[s.identityCard, { borderColor: rank.color + '44' }]}>
+                {/* Avatar */}
+                <View style={[s.avatar, { backgroundColor: avatarColor + '30', borderColor: avatarColor + '70' }]}>
+                  {player.avatar_url && player.avatar_url.startsWith('http')
+                    ? <Image source={{ uri: player.avatar_url }} style={{ width: 68, height: 68, borderRadius: 34 }} />
+                    : <Text style={[s.avatarText, { color: avatarColor }]}>
+                        {player.pseudo.slice(0, 2).toUpperCase()}
+                      </Text>
+                  }
+                </View>
+
+                {/* Pseudo + drapeau */}
+                <View style={s.flagRow}>
+                  <Text style={s.flagEmoji}>{flagEmoji(player.country_code ?? 'FR')}</Text>
+                  <Text style={s.pseudo} numberOfLines={1}>{player.pseudo}</Text>
+                  <SubscriptionBadge tier={player.subscription_tier} />
+                </View>
+
+                {/* Titre actif */}
+                {activeTitle && (
+                  <View style={[s.titleBadge, { backgroundColor: activeTitle.color + '1a', borderColor: activeTitle.color + '60' }]}>
+                    <Ionicons name="ribbon-outline" size={12} color={activeTitle.color} />
+                    <Text style={[s.titleBadgeText, { color: activeTitle.color }]}>
+                      {activeTitle.label}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Rang */}
+                <View style={[s.rankBadge, { backgroundColor: rank.color + '18', borderColor: rank.color + '50' }]}>
+                  <Text style={s.rankEmoji}>{rank.emoji}</Text>
+                  <Text style={[s.rankLabel, { color: rank.color }]}>{rank.label}</Text>
+                </View>
+
+                {/* Score total */}
+                <View style={s.scoreRow}>
+                  <Ionicons name="star" size={13} color={colors.warning} />
+                  <Text style={s.scoreText}>{player.score_total.toLocaleString('fr-FR')} pts</Text>
+                </View>
+              </View>
+
+              {/* ── Statistiques ──────────────────────────────────── */}
+              <Text style={s.sectionLabel}>STATISTIQUES</Text>
+              <View style={s.statsGrid}>
+                {/* Parties jouées */}
+                <View style={s.statCell}>
+                  <Ionicons name="game-controller-outline" size={17} color={colors.textMuted} />
+                  <Text style={s.statValue}>{player.parties_jouees}</Text>
+                  <Text style={s.statLabel}>Parties jouées</Text>
+                </View>
+
+                {/* Victoires */}
+                <View style={s.statCell}>
+                  <Ionicons name="trophy-outline" size={17} color={colors.warning} />
+                  <Text style={[s.statValue, { color: colors.warning }]}>
+                    {player.parties_gagnees}
+                  </Text>
+                  <Text style={s.statLabel}>Victoires</Text>
+                </View>
+
+                {/* % victoires */}
+                <View style={s.statCell}>
+                  <Ionicons
+                    name="pie-chart-outline"
+                    size={17}
+                    color={winPct >= 70 ? colors.success : winPct >= 40 ? colors.warning : colors.accent}
+                  />
+                  <Text style={[s.statValue, {
+                    color: winPct >= 70 ? colors.success : winPct >= 40 ? colors.warning : colors.accent,
+                  }]}>
+                    {winPct}%
+                  </Text>
+                  <Text style={s.statLabel}>% victoires</Text>
+                </View>
+
+                {/* Meilleure série */}
+                <View style={s.statCell}>
+                  <Ionicons name="flame-outline" size={17} color={colors.info} />
+                  <Text style={[s.statValue, { color: colors.info }]}>
+                    {player.meilleure_serie}j
+                  </Text>
+                  <Text style={s.statLabel}>Meilleure série</Text>
+                </View>
+              </View>
+
+              {/* ── Répartition ───────────────────────────────────── */}
+              <Text style={s.sectionLabel}>RÉPARTITION</Text>
+              {total === 0 ? (
+                <View style={s.distEmpty}>
+                  <Text style={s.distEmptyText}>Pas encore de parties jouées</Text>
+                </View>
+              ) : (
+                <View style={s.distContainer}>
+                  {distItems.map((item) => {
+                    const pct = total > 0 ? item.count / total : 0;
+                    return (
+                      <View key={item.label} style={s.distRow}>
+                        <Text style={s.distLabel}>{item.label}</Text>
+                        <View style={s.distTrack}>
+                          <View style={[
+                            s.distBar,
+                            { width: pct > 0 ? (`${Math.max(pct * 100, 2)}%` as any) : 3,
+                              backgroundColor: pct > 0 ? item.color : colors.border },
+                          ]} />
+                        </View>
+                        <Text style={[s.distCount, { color: pct > 0 ? item.color : colors.textMuted }]}>
+                          {item.count}<Text style={s.distPct}> ({Math.round(pct * 100)}%)</Text>
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Main screen styles ───────────────────────────────────────────────────────
 
 function createStyles(colors: ThemeColors, ff: string | undefined) {
@@ -351,14 +729,15 @@ function LeaderboardConnectedScreen({ session }: { session: ReturnType<typeof us
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
 
   const isOnline = useNetworkStatus();
-  const [data,         setData]         = useState<Profile[]>([]);
-  const [myProfile,    setMyProfile]    = useState<Profile | null>(null);
-  const [myRealRank,   setMyRealRank]   = useState<number>(0);
-  const [loading,      setLoading]      = useState(true);
-  const [cachedAt,     setCachedAt]     = useState<number | null>(null);
-  const [loadError,    setLoadError]    = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [titlesMap,    setTitlesMap]    = useState<Map<string, Title>>(new Map());
+  const [data,           setData]           = useState<Profile[]>([]);
+  const [myProfile,      setMyProfile]      = useState<Profile | null>(null);
+  const [myRealRank,     setMyRealRank]     = useState<number>(0);
+  const [loading,        setLoading]        = useState(true);
+  const [cachedAt,       setCachedAt]       = useState<number | null>(null);
+  const [loadError,      setLoadError]      = useState(false);
+  const [errorMessage,   setErrorMessage]   = useState('');
+  const [titlesMap,      setTitlesMap]      = useState<Map<string, Title>>(new Map());
+  const [selectedPlayer, setSelectedPlayer] = useState<Profile | null>(null);
   const hasMounted = useRef(false);
 
   // Charge les titres une seule fois pour affichage dans les rows
@@ -559,6 +938,7 @@ function LeaderboardConnectedScreen({ session }: { session: ReturnType<typeof us
                   rank={displayRank}
                   isMe
                   titlesMap={titlesMap}
+                  onPress={() => setSelectedPlayer(myProfile)}
                 />
                 <MySeparator />
               </View>
@@ -570,12 +950,21 @@ function LeaderboardConnectedScreen({ session }: { session: ReturnType<typeof us
               rank={index + 1}
               isMe={item.id === session?.user.id}
               titlesMap={titlesMap}
+              onPress={() => setSelectedPlayer(item)}
             />
           )}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: SPACING.xxl * 2 }}
         />
       )}
+
+      {/* ── Modal profil public ─────────────────────────────────────────── */}
+      <PlayerProfileModal
+        visible={selectedPlayer !== null}
+        player={selectedPlayer}
+        titlesMap={titlesMap}
+        onClose={() => setSelectedPlayer(null)}
+      />
     </View>
   );
 }

@@ -159,6 +159,24 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     revealGame:          { fontWeight: FONTS.weight.bold, color: colors.accent },
 
 
+    // Streak badge inline (à côté de la barre de clarté)
+    streakInlineBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: SPACING.xs,
+      backgroundColor: colors.card,
+      borderRadius: RADIUS.full,
+      borderWidth: 1,
+      borderColor: '#f97316' + '55',
+      paddingVertical: 3,
+      paddingHorizontal: SPACING.sm,
+    },
+    streakInlineText: {
+      color: '#f97316',
+      fontSize: FONTS.size.xs,
+      fontWeight: FONTS.weight.bold,
+    },
+
     fab: {
       position: 'absolute', bottom: SPACING.xl, right: SPACING.xl,
       flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
@@ -587,6 +605,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
   // dont le blur partiel lors du premier échec → on l'utilise directement
   const effectiveBlur = blurRadius;
   const coins         = isGuest ? (guestProfile?.coins ?? 0) : (profile?.coins ?? 0);
+  const streakSerie   = isGuest ? (guestProfile?.serie_actuelle ?? 0) : (profile?.serie_actuelle ?? 0);
 
   // Profil effectif pour les power-ups (invité ou Supabase)
   const effectiveProfile = isGuest ? (guestProfile as unknown as Profile | null) : profile;
@@ -659,9 +678,6 @@ export function GameScreen({ onBack }: GameScreenProps) {
             </View>
           </View>
           <View style={styles.headerRight}>
-            {(profile?.serie_actuelle ?? 0) >= 3 && (
-              <FlameStreak serie={profile!.serie_actuelle} large={false} />
-            )}
             <View style={styles.coinBadge}>
               <Text style={styles.coinEmoji}>🪙</Text>
               <Text style={styles.coinCount}>{coins.toLocaleString('fr-FR')}</Text>
@@ -696,8 +712,18 @@ export function GameScreen({ onBack }: GameScreenProps) {
           )}
         </View>
 
-        {/* Clarity meter */}
-        <ClarityMeter blurRadius={effectiveBlur} />
+        {/* Clarity meter + streak */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.md, alignSelf: 'flex-start', flexWrap: 'wrap' }}>
+          <ClarityMeter blurRadius={effectiveBlur} />
+          {streakSerie >= 2 && (
+            <View style={styles.streakInlineBadge}>
+              <FlameStreak serie={streakSerie} large={false} />
+              <Text style={styles.streakInlineText}>
+                victoire{streakSerie > 1 ? 's' : ''} d'affilée
+              </Text>
+            </View>
+          )}
+        </View>
 
         {/* Première lettre révélée */}
         {state.powerups.firstLetter && (
@@ -971,7 +997,7 @@ function ClarityMeter({ blurRadius }: { blurRadius: number }) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function blurToLabel(blur: number): string {
-  if (blur === 0)  return 'HD';
+  if (blur <= 2)   return 'HD';
   if (blur >= 22)  return '8px';
   if (blur >= 16)  return '16px';
   if (blur >= 10)  return '32px';

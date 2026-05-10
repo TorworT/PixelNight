@@ -182,7 +182,7 @@ export async function getLeaderboard(): Promise<Profile[]> {
   console.log('[profiles] getLeaderboard() → querying profiles table…');
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, pseudo, country_code, score_total, meilleure_serie, parties_jouees, parties_gagnees, active_title, subscription_tier')
+    .select('id, pseudo, avatar_url, country_code, score_total, meilleure_serie, serie_actuelle, parties_jouees, parties_gagnees, active_title, subscription_tier')
     .order('score_total', { ascending: false })
     .limit(50);
   if (error) {

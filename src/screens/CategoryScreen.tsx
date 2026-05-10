@@ -317,7 +317,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       id:       'games',
       image:    require('../../assets/images/Icones/icon-games.png'),
       emoji:    '🎮',
-      title:    'Jeux Vidéo',
+      title:    'Jeux Vidéos',
       subtitle: 'Retrouve le jeu à partir d\'une capture pixelisée',
       color:    colors.accent,
       available: true,
@@ -334,7 +334,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       id:       'anime',
       image:    require('../../assets/images/Icones/icon-anime.png'),
       emoji:    '⭐',
-      title:    'Animé',
+      title:    'Animés',
       subtitle: 'Devine les animés par leur image pixelisée',
       color:    '#a855f7',
       available: true,
@@ -343,8 +343,8 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       id:       'dessinsanime',
       image:    require('../../assets/images/Icones/icon-dessinsanime.png'),
       emoji:    '🎨',
-      title:    'Dessin Animé',
-      subtitle: 'Retrouve les films et séries d\'animation par leur image',
+      title:    'Dessins Animés',
+      subtitle: 'Retrouve les dessins animés par leur image pixelisée',
       color:    '#f97316',
       available: true,
     },
@@ -408,7 +408,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Catégorie</Text>
+          <Text style={styles.headerTitle}>Catégories</Text>
           <Text style={styles.headerSub}>Choisis ton terrain de jeu</Text>
         </View>
 

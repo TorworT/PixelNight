@@ -28,61 +28,127 @@ import { initRevenueCat, claimDailyCoins } from './src/lib/subscription';
 import { checkChangelog, type ChangelogEntry } from './src/lib/changelog';
 import { ChangelogModal }                from './src/components/ChangelogModal';
 
-// ─── Expo Updates — background check ─────────────────────────────────────────
-// app.json sets checkAutomatically: "ON_LOAD" : Expo applique déjà les updates
-// disponibles avant que le JS ne démarre (cold launch). Cette fonction ajoute
-// une vérification en milieu de session pour les joueurs qui restent longtemps
-// dans l'app. L'update est téléchargée silencieusement et s'appliquera au
-// prochain lancement — sans jamais interrompre la partie en cours.
+// ─── Expo Updates ─────────────────────────────────────────────────────────────
 
-async function checkForUpdateSilently(onUpdateReady?: () => void): Promise<void> {
-  // Skip en dev et dans Expo Go (Updates API indisponible).
-  if (__DEV__ || !Updates.isEnabled) return;
+/**
+ * Vérifie et télécharge silencieusement l'update EAS au démarrage.
+ *
+ * • Ne force PAS reloadAsync() — appelle `onUpdateReady` pour laisser
+ *   le joueur décider via le toast "↺ Redémarrer".
+ * • Sur Android, reloadAsync() sans interaction utilisateur ferme l'app.
+ *
+ * Stratégie update (app.json) :
+ *   checkAutomatically: "NEVER" → le natif ne double-vérifie jamais au
+ *   démarrage (évite la race condition avec ce check JS). Il charge le
+ *   dernier bundle en cache ou l'embarqué si aucun OTA disponible.
+ *   Ce check JS est la seule source de nouvelles updates.
+ *
+ * Skip en __DEV__ et Expo Go (Updates.isEnabled = false).
+ */
+async function checkAndApplyUpdateNow(onUpdateReady?: () => void): Promise<void> {
+  if (__DEV__ || !Updates.isEnabled) {
+    console.log('[updates] skipped — DEV or Expo Go (isEnabled=false)');
+    return;
+  }
+
+  console.log('[updates] checking…', {
+    channel:        Updates.channel,
+    runtimeVersion: Updates.runtimeVersion,
+    updateId:       Updates.updateId,
+    isEmbedded:     Updates.isEmbeddedLaunch,
+  });
+
   try {
     const result = await Updates.checkForUpdateAsync();
-    if (result.isAvailable) {
-      await Updates.fetchUpdateAsync();
-      // ⚠️ PAS de reloadAsync() — l'update s'applique au prochain cold launch.
-      onUpdateReady?.();
+    console.log('[updates] check result →', {
+      isAvailable: result.isAvailable,
+      manifest:    (result as any).manifest?.id ?? 'n/a',
+    });
+
+    if (!result.isAvailable) {
+      console.log('[updates] already up to date');
+      return;
     }
-  } catch {
-    // Erreurs réseau / serveur indisponible → ignorées silencieusement.
+
+    console.log('[updates] fetching new bundle…');
+    await Updates.fetchUpdateAsync();
+    console.log('[updates] bundle ready — showing restart toast');
+    onUpdateReady?.();
+
+  } catch (err: any) {
+    // Erreurs réseau / serveur / runtimeVersion mismatch → ignorées.
+    console.warn('[updates] check failed —', err?.message ?? err);
   }
 }
 
-// ─── Toast "Mise à jour téléchargée" ─────────────────────────────────────────
+// ─── Toast "Mise à jour disponible" ──────────────────────────────────────────
 
 function UpdateToast({ onDismiss }: { onDismiss: () => void }) {
-  const slideY  = useRef(new Animated.Value(-72)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
+  const slideY    = useRef(new Animated.Value(-80)).current;
+  const opacity   = useRef(new Animated.Value(0)).current;
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     // Slide-in
     Animated.parallel([
-      Animated.spring(slideY,  { toValue: 0,   useNativeDriver: true, damping: 18, stiffness: 200 }),
-      Animated.timing(opacity, { toValue: 1,   useNativeDriver: true, duration: 220 }),
+      Animated.spring(slideY,  { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 200 }),
+      Animated.timing(opacity, { toValue: 1, useNativeDriver: true, duration: 220 }),
     ]).start();
 
-    // Auto-dismiss après 5 s
-    const timer = setTimeout(() => dismiss(), 5000);
+    // Auto-dismiss après 15 s si le joueur n'interagit pas
+    const timer = setTimeout(() => dismiss(), 15_000);
     return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dismiss = () => {
     Animated.parallel([
-      Animated.timing(slideY,  { toValue: -72, useNativeDriver: true, duration: 260 }),
+      Animated.timing(slideY,  { toValue: -80, useNativeDriver: true, duration: 260 }),
       Animated.timing(opacity, { toValue: 0,   useNativeDriver: true, duration: 200 }),
     ]).start(onDismiss);
   };
 
+  // Le joueur confirme → reloadAsync() applique le bundle téléchargé.
+  // L'appel est volontaire, ce qui évite la fermeture forcée sur Android.
+  const handleRestart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      await Updates.reloadAsync();
+    } catch {
+      // Si reload échoue (rare), on se contente de fermer le toast.
+      setRestarting(false);
+      dismiss();
+    }
+  };
+
   return (
     <Animated.View style={[updateToastStyles.container, { transform: [{ translateY: slideY }], opacity }]}>
-      <Ionicons name="cloud-download-outline" size={16} color={COLORS.accent} />
+      <Ionicons name="cloud-download-outline" size={18} color={COLORS.accent} />
+
       <View style={updateToastStyles.textBlock}>
-        <Text style={updateToastStyles.title}>Mise à jour téléchargée ✓</Text>
-        <Text style={updateToastStyles.sub}>Sera appliquée au prochain lancement</Text>
+        <Text style={updateToastStyles.title}>Mise à jour disponible !</Text>
+        <Text style={updateToastStyles.sub}>Redémarre pour appliquer les nouveautés</Text>
       </View>
-      <TouchableOpacity onPress={dismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+
+      {/* Bouton "Redémarrer" — déclenche reloadAsync() de façon opt-in */}
+      <TouchableOpacity
+        style={updateToastStyles.restartBtn}
+        onPress={handleRestart}
+        disabled={restarting}
+        activeOpacity={0.8}
+      >
+        {restarting
+          ? <ActivityIndicator size="small" color={COLORS.background} />
+          : <Text style={updateToastStyles.restartBtnText}>↺ Redémarrer</Text>
+        }
+      </TouchableOpacity>
+
+      {/* Fermer sans redémarrer — l'update s'appliquera au prochain lancement */}
+      <TouchableOpacity
+        onPress={dismiss}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        style={{ marginLeft: 4 }}
+      >
         <Ionicons name="close" size={14} color={COLORS.textMuted} />
       </TouchableOpacity>
     </Animated.View>
@@ -91,28 +157,43 @@ function UpdateToast({ onDismiss }: { onDismiss: () => void }) {
 
 const updateToastStyles = StyleSheet.create({
   container: {
-    position:        'absolute',
-    top:             12,
-    left:            16,
-    right:           16,
-    zIndex:          999,
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             10,
-    backgroundColor: COLORS.card,
-    borderWidth:     1,
-    borderColor:     COLORS.accent + '55',
-    borderRadius:    6,
-    paddingVertical: 10,
+    position:          'absolute',
+    top:               12,
+    left:              16,
+    right:             16,
+    zIndex:            999,
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               10,
+    backgroundColor:   COLORS.card,
+    borderWidth:       1.5,
+    borderColor:       COLORS.accent + '70',
+    borderRadius:      8,
+    paddingVertical:   10,
     paddingHorizontal: 14,
-    shadowColor:     '#000',
-    shadowOpacity:   0.4,
-    shadowRadius:    8,
-    elevation:       8,
+    shadowColor:       '#000',
+    shadowOpacity:     0.5,
+    shadowRadius:      10,
+    elevation:         10,
   },
   textBlock: { flex: 1 },
   title:     { color: COLORS.text,      fontSize: 12, fontWeight: '700', fontFamily: 'monospace' },
   sub:       { color: COLORS.textMuted, fontSize: 10, marginTop: 1 },
+  restartBtn: {
+    backgroundColor:   COLORS.accent,
+    borderRadius:      5,
+    paddingVertical:   6,
+    paddingHorizontal: 10,
+    minWidth:          88,
+    alignItems:        'center',
+    justifyContent:    'center',
+  },
+  restartBtnText: {
+    color:      COLORS.background,
+    fontSize:   11,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
 });
 
 // ─── Toast "Pièces quotidiennes" ──────────────────────────────────────────────
@@ -216,9 +297,10 @@ function InnerApp() {
     loadJSON<boolean>('pn_onboarding_done').then((value) => {
       setOnboardingDone(value === true);
     });
-    // Vérifie silencieusement les updates en arrière-plan.
-    // Le callback déclenche le toast si une update a été téléchargée.
-    checkForUpdateSilently(() => setUpdateReady(true));
+    // Vérifie et télécharge l'update EAS silencieusement.
+    // Si une update est prête, setUpdateReady(true) affiche le toast
+    // avec le bouton "Redémarrer" — c'est le joueur qui déclenche reloadAsync().
+    checkAndApplyUpdateNow(() => setUpdateReady(true));
     // Initialise RevenueCat dès le démarrage (non-bloquant, erreurs ignorées).
     initRevenueCat().catch(() => {});
     // Vérifie si le changelog de cette version a déjà été affiché.

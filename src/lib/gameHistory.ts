@@ -45,18 +45,23 @@ export async function recordGameHistory(
 }
 
 /**
- * Récupère les N derniers jours d'historique pour le joueur connecté.
+ * Récupère l'historique de parties pour le joueur connecté.
+ * Si `days` est fourni, filtre sur les N derniers jours.
+ * Sans argument, retourne TOUTES les parties (aucune limite de date).
  */
-export async function getRecentHistory(days = 30): Promise<GameHistoryEntry[]> {
-  const since = new Date();
-  since.setDate(since.getDate() - (days - 1));
-  const sinceStr = since.toISOString().slice(0, 10);
-
-  const { data, error } = await supabase
+export async function getRecentHistory(days?: number): Promise<GameHistoryEntry[]> {
+  let query = supabase
     .from('game_history')
     .select('date, won, attempts, score, coins_earned')
-    .gte('date', sinceStr)
     .order('date', { ascending: false });
+
+  if (days) {
+    const since = new Date();
+    since.setDate(since.getDate() - (days - 1));
+    query = query.gte('date', since.toISOString().slice(0, 10));
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     if (__DEV__) console.warn('[gameHistory] getRecent:', error.message);

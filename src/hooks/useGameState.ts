@@ -63,7 +63,7 @@ function computeBlurRadius(
     // L'image ne se révèle QUE quand le joueur accepte explicitement la défaite.
     // hasWatchedAdForExtra n'affecte PAS le flou — sinon l'image révèle dès
     // que le joueur perd le 4ème essai après avoir regardé la pub.
-    return defeatAccepted ? 0 : BLUR_DEFEAT_PARTIAL;
+    return defeatAccepted ? 2 : BLUR_DEFEAT_PARTIAL;
   }
   return 0;
 }

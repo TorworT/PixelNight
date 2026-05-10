@@ -2,19 +2,20 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
+  Image,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
   Animated,
   ActivityIndicator,
 } from 'react-native';
+import { pickAndUploadAvatar } from '../lib/avatarStorage';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthContext } from '../context/AuthContext';
 import {
   getRecentHistory,
   computeWinDistribution,
-  computeTotalCoinsEarned,
   computeCalendarWeek,
   GameHistoryEntry,
   WinDistributionItem,
@@ -229,16 +230,38 @@ function createCardStyles(colors: ThemeColors, ff: string | undefined) {
       paddingHorizontal: SPACING.xl,
       gap: SPACING.sm,
     },
+    avatarWrapper: {
+      position: 'relative',
+      marginBottom: SPACING.xs,
+    },
     avatar: {
-      width: 68, height: 68,
-      borderRadius: 34,
+      width: 76, height: 76,
+      borderRadius: 38,
       borderWidth: 2,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: SPACING.xs,
+      overflow: 'hidden',
+    },
+    avatarImage: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
     },
     avatarEmoji: {
-      fontSize: 30,
+      fontSize: 32,
+    },
+    editAvatarBtn: {
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: 'rgba(0,0,0,0.72)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: '#fff',
     },
     pseudo: {
       color: colors.text,
@@ -247,20 +270,20 @@ function createCardStyles(colors: ThemeColors, ff: string | undefined) {
       fontFamily: ff ?? 'monospace',
       letterSpacing: 1,
     },
-    rankBadge: {
+    activeTitleCard: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: SPACING.xs,
-      paddingVertical: 5,
+      gap: SPACING.sm,
+      borderRadius: RADIUS.md,
+      paddingVertical: SPACING.sm,
       paddingHorizontal: SPACING.md,
-      borderRadius: RADIUS.full,
       borderWidth: 1.5,
     },
-    rankEmoji: { fontSize: 16 },
-    rankLabel: {
+    activeTitleText: {
       fontSize: FONTS.size.md,
       fontWeight: FONTS.weight.bold,
       fontFamily: ff ?? 'monospace',
+      letterSpacing: 0.5,
     },
     scoreRow: {
       flexDirection: 'row',
@@ -274,6 +297,19 @@ function createCardStyles(colors: ThemeColors, ff: string | undefined) {
       fontWeight: FONTS.weight.bold,
       fontFamily: ff ?? 'monospace',
     },
+    // Utilisé uniquement dans GuestProfileView ("Mode invité")
+    rankBadge: {
+      flexDirection: 'row', alignItems: 'center',
+      gap: SPACING.xs,
+      paddingVertical: 5, paddingHorizontal: SPACING.md,
+      borderRadius: RADIUS.full, borderWidth: 1.5,
+    },
+    rankEmoji: { fontSize: 16 },
+    rankLabel: {
+      fontSize: FONTS.size.md, fontWeight: FONTS.weight.bold,
+      fontFamily: ff ?? 'monospace',
+    },
+
     countryBtn: {
       flexDirection: 'row', alignItems: 'center', gap: 5,
       marginTop: SPACING.xs, paddingVertical: 4,
@@ -634,7 +670,7 @@ export function ProfileScreen() {
 
   const loadHistory = useCallback(async () => {
     setLoadingHist(true);
-    const h = await getRecentHistory(30);
+    const h = await getRecentHistory();
     setHistory(h);
     setLoadingHist(false);
   }, []);
@@ -647,6 +683,21 @@ export function ProfileScreen() {
       if (__DEV__) console.warn('[ProfileScreen] updateCountryCode:', e);
     }
   }, [refreshProfile]);
+
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const handleEditAvatar = useCallback(async () => {
+    if (!profile) return;
+    setUploadingAvatar(true);
+    try {
+      const url = await pickAndUploadAvatar(profile.id);
+      if (url) await refreshProfile();
+    } catch (err) {
+      if (__DEV__) console.warn('[ProfileScreen] avatar upload:', err);
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, [profile, refreshProfile]);
 
   const distColors = useMemo(
     () => [colors.success, colors.info, colors.warning, colors.accent],
@@ -710,7 +761,6 @@ export function ProfileScreen() {
     ? Math.round((profile.parties_gagnees / profile.parties_jouees) * 100)
     : 0;
   const distribution   = computeWinDistribution(history);
-  const totalCoins     = computeTotalCoinsEarned(history);
   const calendarDays   = computeCalendarWeek(history);
   const totalDistCount = distribution.reduce((s, d) => s + d.count, 0);
 
@@ -739,11 +789,14 @@ export function ProfileScreen() {
         <PlayerCard
           pseudo={profile.pseudo}
           avatarEmoji={avatarEmoji}
+          avatarUrl={profile.avatar_url ?? null}
           rank={rank}
           scoreTotal={profile.score_total}
           countryCode={profile.country_code ?? 'FR'}
           onChangeCountry={() => setShowCountry(true)}
           activeTitle={allTitles.find((t) => t.id === activeTitleId) ?? null}
+          onEditAvatar={handleEditAvatar}
+          uploadingAvatar={uploadingAvatar}
         />
 
         {/* ── Stats ───────────────────────────────────────────── */}
@@ -783,11 +836,6 @@ export function ProfileScreen() {
             />
           )}
           <StatCell
-            icon="gift-outline"
-            label="Prochain bonus"
-            value={`dans ${5 - (profile.serie_actuelle % 5)}j`}
-          />
-          <StatCell
             icon="wallet-outline"
             label="Pièces"
             value={profile.coins.toLocaleString('fr-FR')}
@@ -795,19 +843,6 @@ export function ProfileScreen() {
             prefix="🪙"
           />
         </View>
-
-        {/* Pièces gagnées sur l'historique */}
-        {!loadingHist && history.length > 0 && (
-          <View style={styles.coinsRow}>
-            <Ionicons name="trending-up-outline" size={13} color={colors.textMuted} />
-            <Text style={styles.coinsText}>
-              Gagnées (30j) :{' '}
-              <Text style={styles.coinsValue}>
-                🪙 {totalCoins.toLocaleString('fr-FR')} pièces
-              </Text>
-            </Text>
-          </View>
-        )}
 
         {/* ── Répartition ─────────────────────────────────────── */}
         <SectionTitle label="Répartition des résultats" />
@@ -867,43 +902,74 @@ export function ProfileScreen() {
 // ─── PlayerCard ───────────────────────────────────────────────────────────────
 
 function PlayerCard({
-  pseudo, avatarEmoji, rank, scoreTotal, countryCode, onChangeCountry, activeTitle,
+  pseudo, avatarEmoji, avatarUrl, rank, scoreTotal,
+  countryCode, onChangeCountry, activeTitle,
+  onEditAvatar, uploadingAvatar,
 }: {
-  pseudo: string; avatarEmoji: string; rank: Rank; scoreTotal: number;
-  countryCode: string; onChangeCountry: () => void; activeTitle: Title | null;
+  pseudo:           string;
+  avatarEmoji:      string;
+  avatarUrl?:       string | null;
+  rank:             Rank;
+  scoreTotal:       number;
+  countryCode:      string;
+  onChangeCountry:  () => void;
+  activeTitle:      Title | null;
+  onEditAvatar?:    () => void;
+  uploadingAvatar?: boolean;
 }) {
   const { colors, fontFamily } = useTheme();
-  const card   = useMemo(() => createCardStyles(colors, fontFamily), [colors, fontFamily]);
-  const titles = useMemo(() => createTitleStyles(colors, fontFamily), [colors, fontFamily]);
+  const card    = useMemo(() => createCardStyles(colors, fontFamily), [colors, fontFamily]);
   const country = findCountry(countryCode);
+  const hasImg  = !!(avatarUrl && avatarUrl.startsWith('http'));
+
   return (
     <View style={[card.container, { borderColor: rank.color + '44' }]}>
-      <View style={[card.avatar, { backgroundColor: rank.color + '20', borderColor: rank.color + '60' }]}>
-        <Text style={card.avatarEmoji}>{avatarEmoji}</Text>
+
+      {/* ── Avatar + bouton modifier ─────────────────────── */}
+      <View style={card.avatarWrapper}>
+        <View style={[card.avatar, { backgroundColor: rank.color + '20', borderColor: rank.color + '60' }]}>
+          {hasImg
+            ? <Image source={{ uri: avatarUrl! }} style={card.avatarImage} />
+            : <Text style={card.avatarEmoji}>{avatarEmoji}</Text>
+          }
+        </View>
+        {onEditAvatar && (
+          <TouchableOpacity
+            style={card.editAvatarBtn}
+            onPress={onEditAvatar}
+            disabled={uploadingAvatar}
+            activeOpacity={0.75}
+          >
+            {uploadingAvatar
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Ionicons name="camera-outline" size={13} color="#fff" />
+            }
+          </TouchableOpacity>
+        )}
       </View>
+
+      {/* Pseudo */}
       <Text style={card.pseudo} numberOfLines={1}>{pseudo}</Text>
 
-      {/* Titre actif (affiché sous le pseudo s'il existe) */}
+      {/* ── Titre actif mis en valeur ─────────────────────── */}
       {activeTitle ? (
         <View style={[
-          titles.activeBadge,
-          { backgroundColor: activeTitle.color + '1a', borderColor: activeTitle.color + '60' },
+          card.activeTitleCard,
+          { backgroundColor: activeTitle.color + '18', borderColor: activeTitle.color + '66' },
         ]}>
-          <Ionicons name="ribbon-outline" size={12} color={activeTitle.color} />
-          <Text style={[titles.activeBadgeText, { color: activeTitle.color }]}>
+          <Ionicons name="ribbon" size={16} color={activeTitle.color} />
+          <Text style={[card.activeTitleText, { color: activeTitle.color }]}>
             {activeTitle.label}
           </Text>
         </View>
       ) : null}
 
-      <View style={[card.rankBadge, { backgroundColor: rank.color + '18', borderColor: rank.color + '50' }]}>
-        <Text style={card.rankEmoji}>{rank.emoji}</Text>
-        <Text style={[card.rankLabel, { color: rank.color }]}>{rank.label}</Text>
-      </View>
+      {/* Score */}
       <View style={card.scoreRow}>
         <Ionicons name="star" size={13} color={colors.warning} />
         <Text style={card.scoreText}>{scoreTotal.toLocaleString('fr-FR')} pts</Text>
       </View>
+
       {/* Drapeau + bouton changer de pays */}
       <TouchableOpacity style={card.countryBtn} onPress={onChangeCountry} activeOpacity={0.7}>
         <Text style={card.countryFlag}>{flagEmoji(countryCode)}</Text>
