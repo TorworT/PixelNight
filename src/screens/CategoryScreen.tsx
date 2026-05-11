@@ -344,7 +344,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       image:    require('../../assets/images/Icones/icon-dessinsanime.png'),
       emoji:    '🎨',
       title:    'Dessins Animés',
-      subtitle: 'Retrouve les dessins animés par leur image pixelisée',
+      subtitle: 'Retrouve les dessins animés et films d\'animation par leur image pixelisée',
       color:    '#f97316',
       available: true,
     },
