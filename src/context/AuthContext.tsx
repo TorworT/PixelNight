@@ -5,7 +5,7 @@ import { Session } from '@supabase/supabase-js';
 import NetInfo from '@react-native-community/netinfo';
 import { supabase } from '../lib/supabase';
 import { Profile, getProfile } from '../lib/profiles';
-import { loadJSON, saveJSON } from '../utils/storage';
+import { loadJSON, saveJSON, removeJSON } from '../utils/storage';
 import { initNotifications, ensureDailyScheduled } from '../lib/notifications';
 import { prefetchUpcomingGames } from '../lib/dailyGame';
 import {
@@ -15,11 +15,13 @@ import {
   isGuestModeActive,
   setGuestModeActive,
 } from '../lib/guestProfile';
+import { getSubscriptionTier } from '../lib/subscription';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 /** Timeout global du démarrage. Au-delà, l'app affiche toujours quelque chose. */
 const STARTUP_TIMEOUT_MS = 5000;
+
 
 const profileCacheKey = (userId: string) => `pn_profile_cache_${userId}`;
 
@@ -73,6 +75,54 @@ async function cacheProfile(profile: Profile): Promise<void> {
 }
 
 /**
+ * Efface toutes les données de session locales liées à un utilisateur.
+ * Appelé quand une corruption ou une session invalide est détectée,
+ * avant de forcer une déconnexion propre.
+ */
+async function clearAllSessionData(userId: string): Promise<void> {
+  await removeJSON(profileCacheKey(userId));
+  await setGuestModeActive(false);
+}
+
+/**
+ * Détecte un profil corrompu ou incomplet venant du cache AsyncStorage.
+ * Un cache corrompu peut survenir après une migration de schéma, un crash
+ * en cours d'écriture ou une désynchronisation Supabase ↔ cache local.
+ *
+ * Critères :
+ *   - pas d'id ou de pseudo → objet incomplet
+ *   - subscription_tier null/undefined → colonne ajoutée après mise en cache
+ *   - coins null/undefined → idem
+ */
+function isProfileCorrupted(p: unknown): boolean {
+  if (!p || typeof p !== 'object') return true;
+  const profile = p as Partial<Profile>;
+  // Seuls id et pseudo manquants indiquent une vraie corruption.
+  // subscription_tier peut valoir 'free' et coins peut valoir 0 — ce sont
+  // des valeurs légitimes, pas des signes de cache incompatible.
+  if (!profile.id || typeof profile.id !== 'string') return true;
+  if (!profile.pseudo || typeof profile.pseudo !== 'string') return true;
+  return false;
+}
+
+/**
+ * Retourne true si l'erreur Supabase indique une session expirée ou invalide.
+ * Déclenche une déconnexion propre plutôt que de laisser un état vide.
+ */
+function isAuthError(err: unknown): boolean {
+  const msg = ((err as any)?.message ?? '').toLowerCase();
+  const code = (err as any)?.code ?? '';
+  return (
+    msg.includes('jwt expired') ||
+    msg.includes('invalid_token') ||
+    msg.includes('not authenticated') ||
+    msg.includes('refresh_token_not_found') ||
+    code === 'PGRST301' || // JWT expired côté PostgREST
+    code === '401'
+  );
+}
+
+/**
  * Si un profil invité local existe, transfère ses données vers le compte
  * Supabase connecté, puis efface le profil local.
  * Ne tente rien si l'appareil est hors ligne.
@@ -118,26 +168,76 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
   // ── fetchProfile avec mise en cache ─────────────────────────────────────────
-  const fetchProfile = useCallback(async (userId: string) => {
+  /**
+   * Charge le profil depuis Supabase + RC, met en cache, et met à jour le state.
+   * Retourne le profil chargé ou null en cas d'échec total.
+   *
+   * Stratégie de robustesse :
+   *   1. Si Supabase répond → merge avec le tier RC → setProfile → mise en cache → retourne profil.
+   *   2. Si Supabase retourne null (PGRST116) → fallback cache.
+   *   3. Si le cache est corrompu → on l'efface + on retente (1 fois) via Supabase.
+   *   4. Si l'erreur indique une session expirée/invalide → signOut propre → retourne null.
+   *   5. Si toute tentative échoue → retourne null (appelant décidera de l'action).
+   */
+  const fetchProfile = useCallback(async (userId: string, _retry = false): Promise<Profile | null> => {
     try {
-      const p = await getProfile(userId);
+      // Lecture Supabase + tier RevenueCat en parallèle.
+      // RC est la source de vérité pour le tier : si RC retourne un tier actif,
+      // il écrase la valeur Supabase (qui peut être en retard après un achat).
+      const [p, rcTier] = await Promise.all([
+        getProfile(userId),
+        getSubscriptionTier(),
+      ]);
+
       if (p && mountedRef.current) {
-        setProfile(p);
-        cacheProfile(p).catch(() => {});
+        // RC gagne si non-free ; sinon on garde la valeur Supabase
+        const mergedTier = rcTier !== 'free' ? rcTier : p.subscription_tier;
+        const merged = { ...p, subscription_tier: mergedTier };
+        setProfile(merged);
+        await cacheProfile(merged).catch(() => {});
+        return merged;
       } else if (!p && mountedRef.current) {
-        // Profil null = PGRST116 (pas de ligne) — charger depuis le cache
+        // PGRST116 : profil pas encore créé — tentative depuis le cache
         const cached = await loadCachedProfile(userId);
-        if (cached && mountedRef.current) setProfile(cached);
+        if (isProfileCorrupted(cached)) {
+          // Cache corrompu sans profil distant → on efface et on attend la création
+          await removeJSON(profileCacheKey(userId));
+          console.warn('[AuthContext] fetchProfile — cache corrompu effacé (profil absent de Supabase)');
+          return null;
+        } else if (cached && mountedRef.current) {
+          setProfile(cached);
+          return cached;
+        }
+        return null;
       }
+      return null;
     } catch (err) {
-      // Erreur Supabase (RLS, colonne manquante, réseau…) → fallback cache
-      console.error('[AuthContext] fetchProfile threw:', err);
-      const cached = await loadCachedProfile(userId);
-      if (cached && mountedRef.current) {
-        console.log('[AuthContext] fetchProfile using cached profile for', userId);
-        setProfile(cached);
+      // ── Session expirée / token invalide → déconnexion propre ────────────
+      if (isAuthError(err)) {
+        console.error('[AuthContext] fetchProfile — session invalide, déconnexion propre:', err);
+        await clearAllSessionData(userId);
+        await supabase.auth.signOut();
+        if (mountedRef.current) { setSession(null); setProfile(null); }
+        return null;
       }
-      // Ne pas propager : l'app continue avec le cache ou sans profil
+
+      console.error('[AuthContext] fetchProfile threw:', err);
+
+      if (!_retry) {
+        // Première erreur : on efface le cache potentiellement corrompu et on retente
+        console.warn('[AuthContext] fetchProfile — effacement cache + retry');
+        await removeJSON(profileCacheKey(userId));
+        return fetchProfile(userId, true);
+      }
+
+      // Deuxième échec : fallback cache (même potentiellement périmé vaut mieux que vide)
+      const cached = await loadCachedProfile(userId);
+      if (cached && !isProfileCorrupted(cached) && mountedRef.current) {
+        console.log('[AuthContext] fetchProfile — fallback cache (retry échoué)');
+        setProfile(cached);
+        return cached;
+      }
+      return null;
     }
   }, []);
 
@@ -196,31 +296,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    *    garantir que setAuthLoading(false) est appelé dans tous les cas.
    */
   const runStartup = useCallback(async (): Promise<void> => {
-    // supabase.auth.getSession() lit d'abord depuis AsyncStorage et peut
-    // faire une requête réseau pour rafraîchir un token expiré → peut bloquer.
-    const { data: { session: s } } = await supabase.auth.getSession();
+    // getSession() lit AsyncStorage puis tente un refresh réseau si le token est expiré.
+    const { data: { session: s }, error: sessionError } = await supabase.auth.getSession();
+
+    // Session explicitement invalide (refresh token expiré, révoqué, etc.)
+    if (sessionError) {
+      console.error('[AuthContext] runStartup — getSession error:', sessionError.message);
+      await supabase.auth.signOut();
+      if (mountedRef.current) { setSession(null); setAuthLoading(false); }
+      return;
+    }
 
     if (!mountedRef.current) return;
     setSession(s);
 
     if (s?.user.id) {
-      // Vérifier la connectivité AVANT tout appel Supabase
       const net = await NetInfo.fetch();
       const online = net.isConnected !== false;
 
       if (online) {
-        // Transfert éventuel de données invité + chargement du profil frais
+        // ── Validation du token côté serveur ────────────────────────────────
+        // getSession() lit AsyncStorage sans valider avec Supabase : un token
+        // périmé ou révoqué peut passer silencieusement.
+        // refreshSession() échange le token avec le serveur et garantit sa validité.
+        const { error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError) {
+          console.error('[AuthContext] runStartup — refreshSession failed:', refreshError.message);
+          await clearAllSessionData(s.user.id);
+          await supabase.auth.signOut();
+          if (mountedRef.current) { setSession(null); setAuthLoading(false); }
+          return;
+        }
+
+        // En ligne : profil frais depuis Supabase (fetchProfile gère les erreurs et retries)
         await maybeTransferGuestData(s.user.id);
-        await fetchProfile(s.user.id);
+        const loadedProfile = await fetchProfile(s.user.id);
+
+        // ── Détection état corrompu post-fetch ─────────────────────────────
+        // Si le profil est null ou invalide après un fetch en ligne réussi,
+        // c'est un état anormal (compte supprimé, données corrompues, etc.).
+        // → déconnexion propre pour repartir de zéro plutôt que laisser
+        //   l'utilisateur bloqué avec 0 pièces et aucune action possible.
+        if (!loadedProfile || isProfileCorrupted(loadedProfile)) {
+          console.error('[AuthContext] runStartup — profil null/corrompu après fetch, déconnexion forcée');
+          await clearAllSessionData(s.user.id);
+          await supabase.auth.signOut();
+          if (mountedRef.current) { setSession(null); setProfile(null); setAuthLoading(false); }
+          return;
+        }
+
         initNotifications().catch(() => {});
         prefetchUpcomingGames().catch(() => {});
       } else {
-        // Hors ligne : profil depuis le cache local (jamais de réseau)
+        // Hors ligne : profil depuis le cache local
         const cached = await loadCachedProfile(s.user.id);
-        if (cached && mountedRef.current) setProfile(cached);
+        if (isProfileCorrupted(cached)) {
+          // Cache corrompu et pas de réseau → on l'efface, l'utilisateur verra un état vide
+          // mais au prochain lancement en ligne, fetchProfile repartira proprement.
+          console.warn('[AuthContext] runStartup — cache corrompu hors ligne, effacement');
+          await removeJSON(profileCacheKey(s.user.id));
+        } else if (cached && mountedRef.current) {
+          setProfile(cached);
+        }
       }
     } else {
-      // Pas de session — mode invité ou écran hors ligne
+      // Pas de session — mode invité ou premier lancement
       const net = await NetInfo.fetch();
       const guestActive = await isGuestModeActive();
 
@@ -228,7 +368,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const gp = await getGuestProfile();
         if (mountedRef.current) { setGuestProfile(gp); setIsGuest(true); }
       } else if (net.isConnected === false) {
-        // Hors ligne sans compte ni mode invité → écran "pas de connexion"
         if (mountedRef.current) setOfflineStart(true);
       }
     }

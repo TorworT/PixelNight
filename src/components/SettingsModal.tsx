@@ -3,9 +3,11 @@ import {
   Modal,
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   Switch,
+  Alert,
   Linking,
   Animated,
   ScrollView,
@@ -17,8 +19,14 @@ import {
   areNotificationsEnabled,
   setNotificationsEnabled,
 } from '../lib/notifications';
+import {
+  loadHapticsPreference,
+  setHapticsDisabled,
+  getHapticsDisabled,
+} from '../utils/haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { updatePseudo, deleteAccount } from '../lib/profiles';
 import * as Updates from 'expo-updates';
 import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
 import { AboutScreen } from '../screens/AboutScreen';
@@ -56,8 +64,15 @@ export function SettingsModal({ visible, onDismiss }: Props) {
   const slideY  = React.useRef(new Animated.Value(400)).current;
   const opacity = React.useRef(new Animated.Value(0)).current;
 
-  const [notifsEnabled, setNotifsEnabled] = useState(true);
-  const [togglingNotifs, setTogglingNotifs] = useState(false);
+  const [notifsEnabled,   setNotifsEnabled]   = useState(true);
+  const [togglingNotifs,  setTogglingNotifs]  = useState(false);
+  const [hapticsOff,      setHapticsOff]      = useState(false);
+  // Pseudo
+  const [pseudoInput,     setPseudoInput]     = useState('');
+  const [updatingPseudo,  setUpdatingPseudo]  = useState(false);
+  const [pseudoFeedback,  setPseudoFeedback]  = useState<{ msg: string; ok: boolean } | null>(null);
+  // Suppression de compte
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
@@ -65,12 +80,15 @@ export function SettingsModal({ visible, onDismiss }: Props) {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
 
-  // Charger l'état des notifs à l'ouverture
+  // Charger l'état des notifs + vibrations + pseudo à l'ouverture
   useEffect(() => {
     if (visible) {
       areNotificationsEnabled().then(setNotifsEnabled);
+      loadHapticsPreference().then(() => setHapticsOff(getHapticsDisabled()));
+      setPseudoInput(profile?.pseudo ?? '');
+      setPseudoFeedback(null);
     }
-  }, [visible]);
+  }, [visible, profile?.pseudo]);
 
   // Animation entrée / sortie
   useEffect(() => {
@@ -92,6 +110,86 @@ export function SettingsModal({ visible, onDismiss }: Props) {
     await setNotificationsEnabled(value);
     setTogglingNotifs(false);
   }, []);
+
+  // ── Toggle vibrations ────────────────────────────────────────────────────
+  const handleToggleHaptics = useCallback(async (value: boolean) => {
+    setHapticsOff(value);
+    await setHapticsDisabled(value);
+  }, []);
+
+  // ── Modifier le pseudo ───────────────────────────────────────────────────
+  const handleUpdatePseudo = useCallback(async () => {
+    const trimmed = pseudoInput.trim();
+    if (trimmed.length < 3) {
+      setPseudoFeedback({ msg: 'Le pseudo doit contenir au moins 3 caractères.', ok: false });
+      return;
+    }
+    if (trimmed.length > 20) {
+      setPseudoFeedback({ msg: 'Le pseudo ne peut pas dépasser 20 caractères.', ok: false });
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {
+      setPseudoFeedback({ msg: 'Seuls les lettres, chiffres et _ sont autorisés.', ok: false });
+      return;
+    }
+    if (trimmed === profile?.pseudo) {
+      setPseudoFeedback({ msg: 'C\'est déjà votre pseudo actuel.', ok: false });
+      return;
+    }
+    setUpdatingPseudo(true);
+    setPseudoFeedback(null);
+    const result = await updatePseudo(trimmed);
+    setUpdatingPseudo(false);
+    if (result === 'ok') {
+      setPseudoFeedback({ msg: '✓ Pseudo mis à jour avec succès.', ok: true });
+    } else if (result === 'taken') {
+      setPseudoFeedback({ msg: 'Ce pseudo est déjà pris. Essayez-en un autre.', ok: false });
+    } else {
+      setPseudoFeedback({ msg: 'Une erreur est survenue. Réessayez.', ok: false });
+    }
+  }, [pseudoInput, profile?.pseudo]);
+
+  // ── Supprimer le compte ──────────────────────────────────────────────────
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      'Supprimer mon compte',
+      'Cette action est irréversible. Vos scores, pièces et données de jeu seront définitivement supprimés.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+            // Deuxième confirmation pour éviter les suppressions accidentelles
+            Alert.alert(
+              'Confirmation finale',
+              'Voulez-vous vraiment supprimer votre compte ? Cette opération est définitive.',
+              [
+                { text: 'Annuler', style: 'cancel' },
+                {
+                  text: 'Oui, supprimer',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setDeletingAccount(true);
+                    try {
+                      await deleteAccount();
+                    } catch {
+                      // Le compte est peut-être déjà supprimé côté serveur
+                    } finally {
+                      // Déconnexion locale dans tous les cas
+                      await supabase.auth.signOut();
+                      setDeletingAccount(false);
+                      onDismiss();
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  }, [onDismiss]);
 
   // ── Déconnexion ──────────────────────────────────────────────────────────
   const handleSignOut = useCallback(async () => {
@@ -162,6 +260,37 @@ export function SettingsModal({ visible, onDismiss }: Props) {
               </View>
             </View>
 
+            {/* ── Modifier le pseudo ──────────────────────────────────── */}
+            <View style={styles.pseudoRow}>
+              <Ionicons name="pencil-outline" size={19} color={COLORS.info} />
+              <TextInput
+                style={styles.pseudoInput}
+                value={pseudoInput}
+                onChangeText={(v) => { setPseudoInput(v); setPseudoFeedback(null); }}
+                placeholder="Nouveau pseudo"
+                placeholderTextColor={COLORS.textMuted}
+                maxLength={20}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={[styles.pseudoBtn, (updatingPseudo || pseudoInput.trim() === profile?.pseudo) && styles.pseudoBtnDisabled]}
+                onPress={handleUpdatePseudo}
+                disabled={updatingPseudo || pseudoInput.trim() === profile?.pseudo}
+                activeOpacity={0.75}
+              >
+                {updatingPseudo
+                  ? <ActivityIndicator size="small" color={COLORS.info} />
+                  : <Text style={styles.pseudoBtnText}>Modifier</Text>
+                }
+              </TouchableOpacity>
+            </View>
+            {pseudoFeedback !== null && (
+              <Text style={[styles.settingHint, pseudoFeedback.ok ? styles.feedbackOk : styles.feedbackErr]}>
+                {pseudoFeedback.msg}
+              </Text>
+            )}
+
             <SettingRow
               icon="log-out-outline"
               iconColor={COLORS.accent}
@@ -169,6 +298,16 @@ export function SettingsModal({ visible, onDismiss }: Props) {
               onPress={handleSignOut}
               destructive
               loading={signingOut}
+            />
+
+            {/* ── Supprimer le compte ─────────────────────────────────── */}
+            <SettingRow
+              icon="trash-outline"
+              iconColor={COLORS.accent}
+              label="Supprimer mon compte"
+              onPress={handleDeleteAccount}
+              destructive
+              loading={deletingAccount}
             />
 
             {/* ── Section Notifications ─────────────────────────────────── */}
@@ -194,6 +333,21 @@ export function SettingsModal({ visible, onDismiss }: Props) {
               Une notification chaque jour à 7h pour vous rappeler de jouer.
               Annulée automatiquement si vous avez déjà joué.
             </Text>
+
+            {/* ── Section Gameplay ──────────────────────────────────────── */}
+            <SectionLabel label="Gameplay" />
+
+            <View style={[styles.settingRow, styles.settingRowBg]}>
+              <Ionicons name="phone-portrait-outline" size={19} color={COLORS.textMuted} />
+              <Text style={styles.settingLabel}>Désactiver la vibration</Text>
+              <Switch
+                value={hapticsOff}
+                onValueChange={handleToggleHaptics}
+                trackColor={{ false: COLORS.border, true: COLORS.accent + '99' }}
+                thumbColor={hapticsOff ? COLORS.accent : COLORS.textMuted}
+                ios_backgroundColor={COLORS.border}
+              />
+            </View>
 
             {/* ── Section App ───────────────────────────────────────────── */}
             <SectionLabel label="Application" />
@@ -442,5 +596,52 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: FONTS.size.xs,
     marginTop: 2,
+  },
+
+  // ── Pseudo ────────────────────────────────────────────────────────────────
+  pseudoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.cardAlt,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.info + '55',
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    marginBottom: SPACING.xs,
+  },
+  pseudoInput: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: FONTS.size.sm,
+    fontFamily: 'monospace',
+    paddingVertical: 4,
+  },
+  pseudoBtn: {
+    backgroundColor: COLORS.info + '22',
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.info + '66',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  pseudoBtnDisabled: {
+    opacity: 0.4,
+  },
+  pseudoBtnText: {
+    color: COLORS.info,
+    fontSize: FONTS.size.xs,
+    fontWeight: FONTS.weight.bold,
+  },
+  feedbackOk: {
+    color: COLORS.success,
+    fontStyle: 'normal',
+  },
+  feedbackErr: {
+    color: COLORS.accent,
+    fontStyle: 'normal',
   },
 });

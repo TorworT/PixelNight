@@ -1,5 +1,5 @@
 /**
- * LootboxButton — coffre gratuit toutes les 48h
+ * LootboxButton — coffre gratuit (24h par défaut, 12h pour Legend)
  * ─────────────────────────────────────────────────────────────────────────────
  * FLOW :
  *  1. Coffre disponible (🎁) → tap → appel RPC claim_lootbox()
@@ -26,7 +26,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '../utils/haptics';
 import { supabase } from '../lib/supabase';
 import { FONTS, SPACING, RADIUS } from '../constants/theme';
 import { useTheme } from '../context/ThemeContext';
@@ -34,7 +34,8 @@ import type { ThemeColors } from '../constants/appearances';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-const COOLDOWN_MS  = 24 * 60 * 60 * 1000;
+const COOLDOWN_DEFAULT_MS = 24 * 60 * 60 * 1000; // free / basic / pro
+const COOLDOWN_LEGEND_MS  = 12 * 60 * 60 * 1000; // legend
 const CHEST_W      = 68;
 const CHEST_H      = 88;
 const EDGE_MARGIN  = 6;
@@ -42,9 +43,10 @@ const STORAGE_POS  = '@lootbox_pos';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function computeStatus(lastMs: number | null) {
+function computeStatus(lastMs: number | null, isLegend: boolean) {
   if (lastMs === null) return { available: true, remainingMs: 0 };
-  const rem = lastMs + COOLDOWN_MS - Date.now();
+  const cooldown = isLegend ? COOLDOWN_LEGEND_MS : COOLDOWN_DEFAULT_MS;
+  const rem = lastMs + cooldown - Date.now();
   return { available: rem <= 0, remainingMs: Math.max(0, rem) };
 }
 
@@ -115,9 +117,11 @@ function LootboxRewardModal({ visible, coins, onClose }: ModalProps) {
 interface Props {
   lastClaimed: string | null;
   onClaimed:   () => void;
+  /** true si l'utilisateur est abonné Legend → cooldown 12h au lieu de 24h. */
+  isLegend?:   boolean;
 }
 
-export function LootboxButton({ lastClaimed, onClaimed }: Props) {
+export function LootboxButton({ lastClaimed, onClaimed, isLegend = false }: Props) {
   const { colors } = useTheme();
   const bs = useMemo(() => createButtonStyles(colors), [colors]);
   const { width: SW, height: SH } = useWindowDimensions();
@@ -144,8 +148,8 @@ export function LootboxButton({ lastClaimed, onClaimed }: Props) {
   }, []);
 
   const { available, remainingMs } = useMemo(
-    () => computeStatus(localClaimedMs),
-    [localClaimedMs, tick], // eslint-disable-line react-hooks/exhaustive-deps
+    () => computeStatus(localClaimedMs, isLegend),
+    [localClaimedMs, isLegend, tick], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   // ── Ouverture ─────────────────────────────────────────────────────────────────
@@ -231,7 +235,7 @@ export function LootboxButton({ lastClaimed, onClaimed }: Props) {
   useEffect(() => { swRef.current = SW; shRef.current = SH; }, [SW, SH]);
 
   const activateDrag = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     isDraggingRef.current = true;
     setIsDragging(true);
     dragDX.setValue(0);

@@ -12,7 +12,7 @@ import { FONTS, SPACING, RADIUS } from '../constants/theme';
 import { useAuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { addCoins, buyItem, InventoryItemType } from '../lib/profiles';
-import Purchases from 'react-native-purchases';
+import { purchaseCoinPack } from '../lib/subscription';
 import { getTitles, getMyTitles, buyTitle, Title } from '../lib/titles';
 import { AdModal } from '../components/AdModal';
 import { IS_EXPO_GO, showRewardedAdCoins } from '../lib/admob';
@@ -26,11 +26,16 @@ import type { ThemeColors } from '../constants/appearances';
 
 // ─── Lootbox ──────────────────────────────────────────────────────────────────
 
-const LOOTBOX_COOLDOWN_MS = 48 * 60 * 60 * 1000;
+const LOOTBOX_COOLDOWN_DEFAULT_MS = 24 * 60 * 60 * 1000; // 24h — free / basic / pro
+const LOOTBOX_COOLDOWN_LEGEND_MS  = 12 * 60 * 60 * 1000; // 12h — legend
 
-function lootboxStatus(lastClaimed: string | null): { available: boolean; remainingMs: number } {
+function lootboxStatus(
+  lastClaimed: string | null,
+  isLegend:   boolean,
+): { available: boolean; remainingMs: number } {
   if (!lastClaimed) return { available: true, remainingMs: 0 };
-  const rem = new Date(lastClaimed).getTime() + LOOTBOX_COOLDOWN_MS - Date.now();
+  const cooldown = isLegend ? LOOTBOX_COOLDOWN_LEGEND_MS : LOOTBOX_COOLDOWN_DEFAULT_MS;
+  const rem = new Date(lastClaimed).getTime() + cooldown - Date.now();
   return { available: rem <= 0, remainingMs: Math.max(0, rem) };
 }
 
@@ -56,17 +61,17 @@ const PREMIUM_TIERS: TierDef[] = [
   {
     id: 'basic', label: 'Basic', price: '1,99 €/mois',
     color: '#60a5fa', icon: 'star-outline',
-    perks: ['Sans publicités', 'Badge exclusif dans le classement'],
+    perks: ['Sans publicités'],
   },
   {
     id: 'pro', label: 'Pro', price: '3,99 €/mois',
     color: '#a78bfa', icon: 'flash-outline', badge: 'Populaire',
-    perks: ['Tout Basic', '+2 chances/jour', 'Mode Infini', 'Accès anticipé catégories'],
+    perks: ['Tout Basic', '6 chances par partie', 'Mode Infini', '+20 🪙/jour', 'Accès anticipé catégories'],
   },
   {
     id: 'legend', label: 'Legend', price: '5,99 €/mois',
     color: '#fbbf24', icon: 'trophy-outline', badge: 'Ultime',
-    perks: ['Tout Pro', 'Chances illimitées', '+50 🪙/jour', 'Coffre toutes les 24h'],
+    perks: ['Tout Pro', '7 chances par partie', '+100 🪙/jour', 'Coffre toutes les 12h'],
   },
 ];
 
@@ -555,16 +560,16 @@ export function ShopScreen() {
 
     setBuyingPackId(pack.productId);
     try {
-      await Purchases.purchaseProduct(pack.productId);
-      // Crédit les pièces côté Supabase
-      await addCoins(pack.coins);
-      await refreshProfile();
-      showToast(`+${pack.coins} pièces créditées ! 🪙`, true);
-    } catch (err: any) {
-      // Code 1 = annulé par l'utilisateur — silencieux
-      if (err?.code !== 1) {
-        showToast('Achat annulé ou échoué', false);
+      // purchaseCoinPack gère l'achat RevenueCat + le crédit Supabase atomiquement
+      const ok = await purchaseCoinPack(pack.productId, pack.coins);
+      if (ok) {
+        await refreshProfile();
+        showToast(`+${pack.coins} pièces créditées ! 🪙`, true);
       }
+      // ok === false → annulation utilisateur, aucun toast
+    } catch (err: any) {
+      if (__DEV__) console.warn('[ShopScreen] handleBuyCoinPack:', err);
+      showToast('Achat échoué — réessaie plus tard', false);
     } finally {
       setBuyingPackId(null);
     }
@@ -680,7 +685,7 @@ export function ShopScreen() {
         {!isGuest && (
           <>
             <SectionTitle icon="gift-outline" label="Coffre gratuit" />
-            <LootboxShopCard lastClaimed={profile?.last_lootbox_claimed_at ?? null} />
+            <LootboxShopCard lastClaimed={profile?.last_lootbox_claimed_at ?? null} isLegend={subscriptionTier === 'legend'} />
           </>
         )}
 
@@ -1098,7 +1103,7 @@ function PremiumTierCard({
 
 // ─── LootboxShopCard ──────────────────────────────────────────────────────────
 
-function LootboxShopCard({ lastClaimed }: { lastClaimed: string | null }) {
+function LootboxShopCard({ lastClaimed, isLegend }: { lastClaimed: string | null; isLegend: boolean }) {
   const { colors, fontFamily } = useTheme();
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
   const [tick, setTick] = useState(0);
@@ -1110,8 +1115,8 @@ function LootboxShopCard({ lastClaimed }: { lastClaimed: string | null }) {
   }, []);
 
   const { available, remainingMs } = useMemo(
-    () => lootboxStatus(lastClaimed),
-    [lastClaimed, tick], // eslint-disable-line react-hooks/exhaustive-deps
+    () => lootboxStatus(lastClaimed, isLegend),
+    [lastClaimed, isLegend, tick], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   return (
@@ -1131,7 +1136,9 @@ function LootboxShopCard({ lastClaimed }: { lastClaimed: string | null }) {
       <View style={styles.lootboxBody}>
         <Text style={styles.lootboxTitle}>Coffre gratuit</Text>
         <Text style={styles.lootboxDesc}>
-          Ouvre un coffre toutes les 48h pendant le jeu pour gagner des pièces.
+          {isLegend
+            ? 'Coffre disponible toutes les 12h (avantage Legend).'
+            : 'Ouvre un coffre toutes les 24h pendant le jeu pour gagner des pièces.'}
         </Text>
         {available ? (
           <View style={styles.lootboxBadgeAvail}>

@@ -230,3 +230,70 @@ export async function updateCountryCode(countryCode: string): Promise<void> {
     throw new Error(error.message ?? 'update_country_failed');
   }
 }
+
+// ─── Pseudo ───────────────────────────────────────────────────────────────────
+
+/**
+ * Tente de mettre à jour le pseudo du joueur connecté.
+ * Retourne :
+ *   'ok'     — mise à jour réussie
+ *   'taken'  — pseudo déjà utilisé par un autre compte (insensible à la casse)
+ *   'error'  — erreur réseau ou Supabase
+ */
+export async function updatePseudo(newPseudo: string): Promise<'ok' | 'taken' | 'error'> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return 'error';
+
+    // Vérification unicité — insensible à la casse, exclut le compte courant
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('id')
+      .ilike('pseudo', newPseudo)
+      .neq('id', user.id)
+      .maybeSingle();
+
+    if (existing) return 'taken';
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ pseudo: newPseudo, updated_at: new Date().toISOString() })
+      .eq('id', user.id);
+
+    if (error) {
+      if (__DEV__) console.warn('[profiles] updatePseudo:', error.message);
+      return 'error';
+    }
+    return 'ok';
+  } catch {
+    return 'error';
+  }
+}
+
+// ─── Suppression de compte ────────────────────────────────────────────────────
+
+/**
+ * Supprime le compte du joueur connecté (profil + auth).
+ *
+ * Prérequis Supabase — exécuter dans SQL Editor :
+ * ─────────────────────────────────────────────────────────────────────────────
+ * CREATE OR REPLACE FUNCTION public.delete_account()
+ * RETURNS void
+ * LANGUAGE plpgsql
+ * SECURITY DEFINER
+ * SET search_path = public, auth
+ * AS $$
+ * BEGIN
+ *   DELETE FROM public.profiles WHERE id = auth.uid();
+ *   DELETE FROM auth.users    WHERE id = auth.uid();
+ * END;
+ * $$;
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function deleteAccount(): Promise<void> {
+  const { error } = await supabase.rpc('delete_account');
+  if (error) {
+    if (__DEV__) console.warn('[profiles] deleteAccount:', error.message);
+    throw new Error(error.message ?? 'delete_account_failed');
+  }
+}

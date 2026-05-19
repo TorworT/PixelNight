@@ -17,6 +17,8 @@ import type { ThemeColors } from '../constants/appearances';
 interface Props {
   onSubmit: (guess: string) => void;
   attemptsLeft: number;
+  /** Nombre total de chances pour la partie — détermine le nombre de ronds affichés. */
+  maxAttempts?: number;
   /** Titres additionnels à inclure dans l'autocomplete (ex: jeu du jour depuis Supabase). */
   extraTitles?: string[];
   /** Titres à exclure de l'autocomplete (power-up "Éliminer ×3"). */
@@ -93,7 +95,7 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
   });
 }
 
-export function GuessInput({ onSubmit, attemptsLeft, extraTitles = [], excludedTitles = [] }: Props) {
+export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, extraTitles = [], excludedTitles = [] }: Props) {
   const [value, setValue] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const { colors, fontFamily } = useTheme();
@@ -194,7 +196,7 @@ export function GuessInput({ onSubmit, attemptsLeft, extraTitles = [], excludedT
 
       {/* ── Attempts dots ─────────────────────────────────────────────────── */}
       <View style={styles.dotsRow}>
-        {Array.from({ length: 3 }, (_, i) => (
+        {Array.from({ length: maxAttempts }, (_, i) => (
           <View
             key={i}
             style={[styles.dot, i < attemptsLeft ? styles.dotActive : styles.dotUsed]}

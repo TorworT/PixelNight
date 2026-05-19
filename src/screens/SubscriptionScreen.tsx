@@ -45,24 +45,24 @@ const TIERS: TierDef[] = [
     id:    'basic',
     label: 'Basic',
     price: '1,99 €/mois',
-    color: '#60a5fa',   // info
+    color: '#60a5fa',
     icon:  'star-outline',
     perks: [
       'Sans publicités',
-      'Badge exclusif Basic dans le classement',
     ],
   },
   {
     id:    'pro',
     label: 'Pro',
     price: '3,99 €/mois',
-    color: '#a78bfa',   // violet
+    color: '#a78bfa',
     icon:  'flash-outline',
     badge: 'Populaire',
     perks: [
       'Tout le palier Basic',
-      '+2 chances supplémentaires par jour',
+      '6 chances par partie',
       'Mode Infini — rejoue tous les jeux passés',
+      '20 🪙 offerts chaque jour',
       'Badge Pro animé dans le classement',
       'Accès aux nouvelles catégories 1 semaine avant tout le monde',
     ],
@@ -71,13 +71,14 @@ const TIERS: TierDef[] = [
     id:    'legend',
     label: 'Legend',
     price: '5,99 €/mois',
-    color: '#fbbf24',   // warning/gold
+    color: '#fbbf24',
     icon:  'trophy-outline',
     badge: 'Ultime',
     perks: [
       'Tout le palier Pro',
-      'Chances illimitées · chaque essai bonus = +50 🪙',
-      '50 🪙 offerts chaque jour',
+      '7 chances par partie',
+      '100 🪙 offerts chaque jour + 100 🪙 à la souscription',
+      'Coffre gratuit toutes les 12h',
       'Badge Legend doré animé dans le classement',
       'Support prioritaire',
     ],
@@ -403,7 +404,7 @@ function TierCard({ tier, currentTier, purchasing, onPurchase }: TierCardProps) 
 export function SubscriptionScreen({ visible, onDismiss }: Props) {
   const { colors, fontFamily } = useTheme();
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
-  const { profile, refreshProfile } = useAuthContext();
+  const { profile, refreshProfile, session } = useAuthContext();
 
   const slideY  = useRef(new Animated.Value(600)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -444,15 +445,36 @@ export function SubscriptionScreen({ visible, onDismiss }: Props) {
     try {
       const ok = await purchaseSubscription(tier);
       if (ok) {
-        // Synchronise le nouveau tier vers Supabase (bloquant),
-        // puis rafraîchit le profil local pour mettre à jour currentTier.
-        await supabase.rpc('sync_subscription_tier', { p_tier: tier }).catch(() => {});
+        // Synchronise le nouveau tier vers Supabase, puis rafraîchit le profil
+        // pour que currentTier (lu depuis profile.subscription_tier) se mette à jour.
+        // Le listener RC (addCustomerInfoUpdateListener dans usePurchases) gère
+        // la mise à jour du tier RevenueCat en parallèle.
+        const userId = session?.user?.id;
+        if (userId) {
+          await supabase.rpc('sync_subscription_tier', { p_user_id: userId, p_tier: tier }).catch(() => {});
+        }
+        // Crédit immédiat de 100 pièces pour les nouveaux abonnés Legend
+        if (tier === 'legend') {
+          await supabase.rpc('add_coins', { p_amount: 100 }).catch(() => {});
+        }
         await refreshProfile();
         showToast('ok', `Abonnement ${tier} activé ! Merci pour ton soutien 🎉`);
       }
-      // ok=false → annulation utilisateur, pas de toast
+      // ok=false → annulation utilisateur (PURCHASE_CANCELLED_ERROR), pas de toast
     } catch (err: any) {
-      showToast('err', err?.message ?? 'Une erreur est survenue lors de l\'achat.');
+      if (__DEV__) {
+        console.warn('[SubscriptionScreen] handlePurchase erreur:', {
+          code:    err?.code,
+          message: err?.message,
+          raw:     err,
+        });
+      }
+      // Construit un message lisible — évite d'afficher "undefined" si .message est absent
+      const raw = err?.message ?? err?.underlyingErrorMessage ?? err?.userInfo?.readableErrorCode;
+      const msg = typeof raw === 'string' && raw.length > 0 && raw !== 'undefined'
+        ? raw
+        : 'Une erreur est survenue lors de l\'achat. Réessaie plus tard.';
+      showToast('err', msg);
     } finally {
       setPurchasing(null);
     }
@@ -465,7 +487,10 @@ export function SubscriptionScreen({ visible, onDismiss }: Props) {
       const tier = await restorePurchases();
       // Synchronise le tier restauré vers Supabase (bloquant),
       // puis rafraîchit le profil local pour mettre à jour currentTier.
-      await supabase.rpc('sync_subscription_tier', { p_tier: tier }).catch(() => {});
+      const userId = session?.user?.id;
+      if (userId) {
+        await supabase.rpc('sync_subscription_tier', { p_user_id: userId, p_tier: tier }).catch(() => {});
+      }
       await refreshProfile();
       if (tier !== 'free') {
         showToast('ok', `Abonnement ${tier} restauré avec succès !`);

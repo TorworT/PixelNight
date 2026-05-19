@@ -13,12 +13,13 @@ type GameStateContextValue = ReturnType<typeof useGameState>;
 const GameStateContext = createContext<GameStateContextValue | null>(null);
 
 interface ProviderProps {
-  children: React.ReactNode;
-  category?: string;
+  children:            React.ReactNode;
+  category?:           string;
+  initialMaxAttempts?: number;
 }
 
-export function GameStateProvider({ children, category = 'games' }: ProviderProps) {
-  const value = useGameState(category);
+export function GameStateProvider({ children, category = 'games', initialMaxAttempts }: ProviderProps) {
+  const value = useGameState(category, initialMaxAttempts);
   return (
     <GameStateContext.Provider value={value}>
       {children}

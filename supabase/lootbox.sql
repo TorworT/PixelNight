@@ -1,6 +1,7 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- PixelNight — lootbox.sql
--- Coffre gratuit toutes les 48h : last_lootbox_claimed_at + claim_lootbox() RPC
+-- Coffre gratuit : 24h par défaut, 12h pour les abonnés Legend
+-- last_lootbox_claimed_at + claim_lootbox() RPC
 -- À exécuter dans Supabase Dashboard → SQL Editor → New query
 -- ══════════════════════════════════════════════════════════════════════════════
 
@@ -10,7 +11,7 @@ ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS last_lootbox_claimed_at TIMESTAMPTZ;
 
 -- ─── 2. CLAIM_LOOTBOX RPC ─────────────────────────────────────────────────────
--- Vérifie le cooldown 48h, tire au sort les pièces selon le système de rareté,
+-- Vérifie le cooldown (24h par défaut, 12h pour Legend), tire au sort les pièces selon le système de rareté,
 -- crédite le joueur et met à jour le timestamp — tout en une transaction.
 --
 -- Système de rareté :
@@ -37,6 +38,8 @@ AS $$
 DECLARE
   v_uid        UUID;
   v_last_claim TIMESTAMPTZ;
+  v_tier       TEXT;
+  v_cooldown   INTERVAL;
   v_next       TIMESTAMPTZ;
   v_rand       FLOAT;
   v_coins      INTEGER;
@@ -46,15 +49,21 @@ BEGIN
     RETURN json_build_object('success', false, 'error', 'not_authenticated');
   END IF;
 
-  -- ── Lecture du dernier claim ──────────────────────────────────────────────
-  SELECT last_lootbox_claimed_at
-    INTO v_last_claim
+  -- ── Lecture du dernier claim + tier ──────────────────────────────────────
+  SELECT last_lootbox_claimed_at, COALESCE(subscription_tier, 'free')
+    INTO v_last_claim, v_tier
     FROM public.profiles
    WHERE id = v_uid;
 
-  -- ── Vérification du cooldown 48 h ─────────────────────────────────────────
+  -- ── Cooldown dynamique : 12h pour Legend, 24h pour tous les autres ────────
+  v_cooldown := CASE WHEN v_tier = 'legend'
+                     THEN INTERVAL '12 hours'
+                     ELSE INTERVAL '24 hours'
+                END;
+
+  -- ── Vérification du cooldown ──────────────────────────────────────────────
   IF v_last_claim IS NOT NULL THEN
-    v_next := v_last_claim + INTERVAL '48 hours';
+    v_next := v_last_claim + v_cooldown;
     IF NOW() < v_next THEN
       RETURN json_build_object(
         'success',        false,

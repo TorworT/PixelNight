@@ -35,7 +35,7 @@ const SLIDES: SlideData[] = [
     title: 'Bienvenue sur PixelNight !',
     lines: [
       'Une image pixelisée apparaît chaque jour',
-      'Devine de quel jeu il s\'agit !',
+      'Devine de quelle image il s\'agit !',
     ],
   },
   {
@@ -43,7 +43,7 @@ const SLIDES: SlideData[] = [
     emoji: '',
     title: 'Comment jouer ?',
     lines: [
-      'Tu as 3 tentatives',
+      'Tu as 5 tentatives',
       'Utilise des indices si tu bloques',
       'Moins d\'indices = plus de pièces !',
     ],
@@ -53,7 +53,7 @@ const SLIDES: SlideData[] = [
     emoji: '',
     title: 'Gagne des pièces !',
     lines: [
-      'Trouve le jeu pour gagner des pièces',
+      'Trouve l\'image pixelisée pour gagner des pièces',
       'Utilise-les dans la boutique',
       'Reviens chaque jour pour ta série !',
     ],

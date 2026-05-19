@@ -16,3 +16,11 @@ export async function saveJSON<T>(key: string, value: T): Promise<void> {
     // Non-fatal: game still playable, progress lost on restart
   }
 }
+
+export async function removeJSON(key: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch {
+    // Non-fatal
+  }
+}

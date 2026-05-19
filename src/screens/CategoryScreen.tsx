@@ -3,6 +3,7 @@ import {
   View,
   Text,
   Image,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   Animated,
@@ -10,7 +11,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '../utils/haptics';
 import { FONTS, SPACING, RADIUS } from '../constants/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuthContext } from '../context/AuthContext';
@@ -88,16 +89,19 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     // Cards container
     cards: {
       flex: 1,
-      gap: SPACING.md,
-      justifyContent: 'center',
+    },
+    cardsContent: {
+      gap: SPACING.sm,
+      paddingBottom: 80, // espace sous le bouton Support fixe
     },
 
     // Card base
     card: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: SPACING.md,
-      padding: SPACING.lg,
+      gap: SPACING.sm,
+      paddingVertical: 10,
+      paddingHorizontal: SPACING.md,
       borderRadius: RADIUS.lg,
       borderWidth: 1.5,
       overflow: 'hidden',
@@ -119,7 +123,7 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
 
     // Icon
     iconBox: {
-      width: 56, height: 56,
+      width: 44, height: 44,
       borderRadius: RADIUS.md,
       borderWidth: 1,
       alignItems: 'center',
@@ -127,12 +131,12 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
       flexShrink: 0,
     },
     catImage: {
-      width: 40,
-      height: 40,
+      width: 30,
+      height: 30,
       resizeMode: 'contain',
     },
     emoji: {
-      fontSize: 26,
+      fontSize: 20,
     },
 
     // Text
@@ -148,7 +152,7 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     },
     cardTitle: {
       color: colors.text,
-      fontSize: FONTS.size.lg,
+      fontSize: FONTS.size.md,
       fontWeight: FONTS.weight.bold,
       fontFamily: ff ?? 'monospace',
     },
@@ -164,7 +168,7 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     // Support FAB
     supportFab: {
       position: 'absolute',
-      bottom: SPACING.xl,
+      bottom: SPACING.xl + 40,
       right: SPACING.xl,
       alignItems: 'center',
       gap: 4,
@@ -313,6 +317,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
   const [showSupport, setShowSupport] = useState(false);
 
   const CATEGORIES: Category[] = useMemo(() => [
+    // ── Actives ──────────────────────────────────────────────────────────────
     {
       id:       'games',
       image:    require('../../assets/images/Icones/icon-games.png'),
@@ -321,14 +326,6 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       subtitle: 'Retrouve le jeu à partir d\'une capture pixelisée',
       color:    colors.accent,
       available: true,
-    },
-    {
-      id:       'cinema',
-      emoji:    '🎬',
-      title:    'Cinéma',
-      subtitle: 'Bientôt disponible — Reconnais les films cultes',
-      color:    colors.info,
-      available: false,
     },
     {
       id:       'anime',
@@ -344,9 +341,50 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       image:    require('../../assets/images/Icones/icon-dessinsanime.png'),
       emoji:    '🎨',
       title:    'Dessins Animés',
-      subtitle: 'Retrouve les dessins animés et films d\'animation par leur image pixelisée',
+      subtitle: 'Retrouve les dessins animés et films d\'animation',
       color:    '#f97316',
       available: true,
+    },
+    // ── À venir ───────────────────────────────────────────────────────────────
+    {
+      id:       'cinema',
+      emoji:    '🎬',
+      title:    'Cinéma',
+      subtitle: 'Bientôt disponible',
+      color:    colors.info,
+      available: false,
+    },
+    {
+      id:       'serie',
+      emoji:    '📺',
+      title:    'Série TV',
+      subtitle: 'Bientôt disponible',
+      color:    '#06b6d4',
+      available: false,
+    },
+    {
+      id:       'logo',
+      emoji:    '🏷️',
+      title:    'Logo',
+      subtitle: 'Bientôt disponible',
+      color:    '#84cc16',
+      available: false,
+    },
+    {
+      id:       'celebrite',
+      emoji:    '🌟',
+      title:    'Célébrité',
+      subtitle: 'Bientôt disponible',
+      color:    '#eab308',
+      available: false,
+    },
+    {
+      id:       'groupemusique',
+      emoji:    '🎵',
+      title:    'Groupe Musique',
+      subtitle: 'Bientôt disponible',
+      color:    '#ec4899',
+      available: false,
     },
   ], [colors]);
 
@@ -356,7 +394,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
 
   // Chaque carte a son propre translateY + opacity
   const cardAnims = useRef(
-    [0, 1, 2, 3].map(() => ({
+    Array.from({ length: 8 }, () => ({
       y:  new Animated.Value(40),
       op: new Animated.Value(0),
     })),
@@ -417,20 +455,25 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       </Animated.View>
 
       {/* ── Cartes ──────────────────────────────────────────────────── */}
-      <View style={styles.cards}>
+      <ScrollView
+        style={styles.cards}
+        contentContainerStyle={styles.cardsContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {CATEGORIES.map((cat, i) => (
           <Animated.View
             key={cat.id}
             style={{
-              transform: [{ translateY: cardAnims[i].y }],
-              opacity:   cardAnims[i].op,
+              transform: [{ translateY: cardAnims[i]?.y ?? new Animated.Value(0) }],
+              opacity:   cardAnims[i]?.op ?? new Animated.Value(1),
               width:     '100%',
             }}
           >
             <CategoryCard cat={cat} onPress={() => handleSelect(cat)} />
           </Animated.View>
         ))}
-      </View>
+      </ScrollView>
 
       {/* ── Bouton Support ──────────────────────────────────────────── */}
       <TouchableOpacity
@@ -461,6 +504,7 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
           <LootboxButton
             lastClaimed={profile?.last_lootbox_claimed_at ?? null}
             onClaimed={() => refreshProfile().catch(() => {})}
+            isLegend={profile?.subscription_tier === 'legend'}
           />
         </View>
       )}

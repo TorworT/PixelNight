@@ -23,29 +23,33 @@ import { OfflineSyncManager }            from './src/components/OfflineSyncManag
 import { NoConnectionScreen }            from './src/screens/NoConnectionScreen';
 import { OnboardingScreen }              from './src/components/OnboardingScreen';
 import { COLORS }                        from './src/constants/theme';
+import AsyncStorage                       from '@react-native-async-storage/async-storage';
 import { loadJSON }                      from './src/utils/storage';
+import { loadHapticsPreference }         from './src/utils/haptics';
 import { initRevenueCat, claimDailyCoins } from './src/lib/subscription';
-import { checkChangelog, type ChangelogEntry } from './src/lib/changelog';
-import { ChangelogModal }                from './src/components/ChangelogModal';
 
 // ─── Expo Updates ─────────────────────────────────────────────────────────────
 
 /**
- * Vérifie et télécharge silencieusement l'update EAS au démarrage.
+ * Vérifie, télécharge et applique automatiquement l'update EAS au démarrage.
  *
- * • Ne force PAS reloadAsync() — appelle `onUpdateReady` pour laisser
- *   le joueur décider via le toast "↺ Redémarrer".
- * • Sur Android, reloadAsync() sans interaction utilisateur ferme l'app.
+ * Flux :
+ *   1. checkForUpdateAsync()  — interroge le serveur EAS
+ *   2. fetchUpdateAsync()     — télécharge le nouveau bundle JS
+ *   3. reloadAsync()          — redémarre l'app avec le nouveau bundle
+ *      → appelé depuis useEffect (composant monté) : safe sur Android
+ *      → le joueur voit le spinner de chargement, le rechargement est transparent
  *
- * Stratégie update (app.json) :
- *   checkAutomatically: "NEVER" → le natif ne double-vérifie jamais au
- *   démarrage (évite la race condition avec ce check JS). Il charge le
- *   dernier bundle en cache ou l'embarqué si aucun OTA disponible.
- *   Ce check JS est la seule source de nouvelles updates.
+ * Si `reloadAsync()` lève une exception (rare), on affiche le toast de
+ * fallback avec le bouton manuel "↺ Redémarrer" (via onFallback).
+ *
+ * app.json → checkAutomatically: "ON_LOAD" couvre le cas où un bundle OTA
+ * a déjà été téléchargé lors d'une session précédente (chargé avant le JS).
+ * Ce check JS couvre le reste (nouvelle update depuis la dernière session).
  *
  * Skip en __DEV__ et Expo Go (Updates.isEnabled = false).
  */
-async function checkAndApplyUpdateNow(onUpdateReady?: () => void): Promise<void> {
+async function checkAndApplyUpdateNow(onFallback?: () => void): Promise<void> {
   if (__DEV__ || !Updates.isEnabled) {
     console.log('[updates] skipped — DEV or Expo Go (isEnabled=false)');
     return;
@@ -72,12 +76,14 @@ async function checkAndApplyUpdateNow(onUpdateReady?: () => void): Promise<void>
 
     console.log('[updates] fetching new bundle…');
     await Updates.fetchUpdateAsync();
-    console.log('[updates] bundle ready — showing restart toast');
-    onUpdateReady?.();
+    console.log('[updates] bundle ready — reloading…');
+    await Updates.reloadAsync();
+    // reloadAsync() redémarre le bundle JS — le code suivant ne s'exécute jamais.
 
   } catch (err: any) {
-    // Erreurs réseau / serveur / runtimeVersion mismatch → ignorées.
-    console.warn('[updates] check failed —', err?.message ?? err);
+    console.warn('[updates] failed —', err?.message ?? err);
+    // Fallback : si reloadAsync() échoue, proposer le rechargement manuel.
+    onFallback?.();
   }
 }
 
@@ -264,19 +270,16 @@ const dailyCoinsToastStyles = StyleSheet.create({
 
 type AppRoute = 'home' | 'categories' | 'game' | 'coming_soon';
 
-const ANIME_LAUNCH_DATE         = new Date(2026, 5, 1); // 1er juin 2026
-const DESSINS_ANIME_LAUNCH_DATE = new Date(2026, 5, 1); // 1er juin 2026
-
 interface ComingSoonInfo {
   label:      string;
   icon:       string;
-  launchDate: string;
+  launchDate?: string;
 }
 
 // ─── Inner app (a accès au contexte Auth) ─────────────────────────────────────
 
 function InnerApp() {
-  const { session, authLoading, isGuest, offlineStart, refreshProfile } = useAuthContext();
+  const { session, profile, authLoading, isGuest, offlineStart, refreshProfile } = useAuthContext();
   const themeColors = useThemeColors();
 
   const [onboardingDone,    setOnboardingDone]    = useState<boolean | null>(null);
@@ -285,9 +288,8 @@ function InnerApp() {
   const [updateReady,       setUpdateReady]       = useState(false);
   const [selectedCategory,  setSelectedCategory]  = useState<string>('games');
   const [dailyCoins,        setDailyCoins]        = useState<number | null>(null);
-  const [pendingChangelog,  setPendingChangelog]  = useState<ChangelogEntry | null>(null);
   const [comingSoonInfo,    setComingSoonInfo]     = useState<ComingSoonInfo>({
-    label: 'Animé', icon: 'star', launchDate: '01/06/2026',
+    label: 'Cinéma', icon: 'film-outline',
   });
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -297,14 +299,18 @@ function InnerApp() {
     loadJSON<boolean>('pn_onboarding_done').then((value) => {
       setOnboardingDone(value === true);
     });
-    // Vérifie et télécharge l'update EAS silencieusement.
-    // Si une update est prête, setUpdateReady(true) affiche le toast
-    // avec le bouton "Redémarrer" — c'est le joueur qui déclenche reloadAsync().
+    // Vérifie, télécharge et applique l'update EAS automatiquement.
+    // Si reloadAsync() échoue (rare), le toast de fallback s'affiche
+    // avec le bouton manuel "↺ Redémarrer".
     checkAndApplyUpdateNow(() => setUpdateReady(true));
-    // Initialise RevenueCat dès le démarrage (non-bloquant, erreurs ignorées).
-    initRevenueCat().catch(() => {});
-    // Vérifie si le changelog de cette version a déjà été affiché.
-    checkChangelog().then((entry) => { if (entry) setPendingChangelog(entry); }).catch(() => {});
+    // Initialise RevenueCat dès le démarrage (non-bloquant).
+    // configure() est appelé EN PREMIER dans initRevenueCat(), avant setLogLevel.
+    // On logue l'erreur en DEV pour ne pas manquer un problème d'init silencieux.
+    initRevenueCat().catch((err) => {
+      if (__DEV__) console.warn('[App] initRevenueCat failed:', err?.message ?? err);
+    });
+    // Charge la préférence de vibration depuis AsyncStorage.
+    loadHapticsPreference().catch(() => {});
   }, []);
 
   // ── Pièces quotidiennes (Pro / Legend) ────────────────────────────────────
@@ -377,20 +383,12 @@ function InnerApp() {
       {route === 'categories' && (
         <CategoryScreen
           onSelectCategory={(id) => {
-            if (id === 'games') {
-              goGame('games');
-            } else if (id === 'anime') {
-              if (new Date() < ANIME_LAUNCH_DATE) {
-                goComingSoon({ label: 'Animé', icon: 'star', launchDate: '01/06/2026' });
-              } else {
-                goGame('anime');
-              }
-            } else if (id === 'dessinsanime') {
-              if (new Date() < DESSINS_ANIME_LAUNCH_DATE) {
-                goComingSoon({ label: 'Dessin Animé', icon: 'tv-outline', launchDate: '01/06/2026' });
-              } else {
-                goGame('dessinsanime');
-              }
+            // Catégories actives → lancement direct du jeu
+            if (id === 'games' || id === 'anime' || id === 'dessinsanime') {
+              goGame(id);
+            } else {
+              // Catégories non encore disponibles (ex: cinema) → écran "À venir"
+              goComingSoon({ label: 'Cinéma', icon: 'film-outline' });
             }
           }}
           onBack={goHome}
@@ -409,7 +407,14 @@ function InnerApp() {
 
       {/* ── ZONE DE JEU (4 onglets) ──────────────────────────────────────── */}
       {route === 'game' && (
-        <GameStateProvider category={selectedCategory}>
+        <GameStateProvider
+          category={selectedCategory}
+          initialMaxAttempts={
+            profile?.subscription_tier === 'legend' ? 7
+            : profile?.subscription_tier === 'pro'    ? 6
+            : 5
+          }
+        >
           <View style={styles.fill}>
 
             {/* Jeu */}
@@ -452,22 +457,63 @@ function InnerApp() {
         <DailyCoinsToast coins={dailyCoins} onDismiss={() => setDailyCoins(null)} />
       )}
 
-      {/* ── Modale changelog (affichée une seule fois par version) ──────── */}
-      {pendingChangelog !== null && onboardingDone === true && (session != null || isGuest) && (
-        <ChangelogModal
-          entry={pendingChangelog}
-          onDismiss={() => setPendingChangelog(null)}
-        />
-      )}
-
     </Animated.View>
   );
+}
+
+// ─── Cache versioning ─────────────────────────────────────────────────────────
+
+/**
+ * À incrémenter à chaque `eas update` qui modifie la structure du cache local.
+ * Quand la version stockée dans AsyncStorage diffère de cette constante,
+ * toutes les clés non-auth sont supprimées avant le montage de AuthProvider.
+ * L'utilisateur reste connecté (clés Supabase préservées) mais repart sur
+ * un cache propre, sans état corrompu.
+ */
+const CACHE_VERSION = '1.0.8';
+
+async function clearStaleCache(): Promise<void> {
+  try {
+    const stored = await AsyncStorage.getItem('pn_cache_version');
+    if (stored === CACHE_VERSION) return; // cache à jour, rien à faire
+
+    const keys      = await AsyncStorage.getAllKeys();
+    const toDelete  = keys.filter((k) =>
+      k !== 'pn_cache_version'  &&   // ne pas supprimer la clé de version elle-même
+      !k.includes('supabase')   &&   // session Supabase
+      !k.includes('auth')       &&   // tokens auth
+      !k.includes('sb-'),            // clés internes Supabase (sb-*-auth-token, etc.)
+    );
+
+    if (toDelete.length > 0) await AsyncStorage.multiRemove(toDelete);
+    await AsyncStorage.setItem('pn_cache_version', CACHE_VERSION);
+
+    if (__DEV__) {
+      console.log(`[cache] purge v${CACHE_VERSION} — ${toDelete.length} clé(s) supprimée(s) :`, toDelete);
+    }
+  } catch (err) {
+    // Non-bloquant : si la purge échoue, l'app continue normalement
+    if (__DEV__) console.warn('[cache] clearStaleCache failed:', err);
+  }
 }
 
 // ─── ThemedRoot (lit ThemeContext pour le fond dynamique) ─────────────────────
 
 function ThemedRoot() {
   const themeColors = useThemeColors();
+  const [cacheReady, setCacheReady] = useState(false);
+
+  // Purge le cache obsolète AVANT que AuthProvider monte et lise AsyncStorage.
+  // Garantit qu'il n'y a aucune course entre la purge et getSession().
+  useEffect(() => {
+    clearStaleCache().finally(() => setCacheReady(true));
+  }, []);
+
+  if (!cacheReady) {
+    // Écran vide de la couleur du thème le temps de la purge (< 100 ms)
+    return <View style={[styles.root, { backgroundColor: themeColors.background }]} />;
+  }
+
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: themeColors.background }]} edges={['top']}>
       <StatusBar style="light" backgroundColor={themeColors.background} />

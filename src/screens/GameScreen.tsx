@@ -9,7 +9,7 @@ import {
   Animated,
   ActivityIndicator,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '../utils/haptics';
 import { Ionicons } from '@expo/vector-icons';
 import ConfettiCannon from 'react-native-confetti-cannon';
 
@@ -604,7 +604,6 @@ export function GameScreen({ onBack }: GameScreenProps) {
   // blurRadius gère déjà tous les états (playing/lost/won/skipped)
   // dont le blur partiel lors du premier échec → on l'utilise directement
   const effectiveBlur = blurRadius;
-  const coins         = isGuest ? (guestProfile?.coins ?? 0) : (profile?.coins ?? 0);
   const streakSerie   = isGuest ? (guestProfile?.serie_actuelle ?? 0) : (profile?.serie_actuelle ?? 0);
 
   // Profil effectif pour les power-ups (invité ou Supabase)
@@ -678,10 +677,6 @@ export function GameScreen({ onBack }: GameScreenProps) {
             </View>
           </View>
           <View style={styles.headerRight}>
-            <View style={styles.coinBadge}>
-              <Text style={styles.coinEmoji}>🪙</Text>
-              <Text style={styles.coinCount}>{coins.toLocaleString('fr-FR')}</Text>
-            </View>
             <View style={styles.pixelBadge}>
               <Text style={styles.pixelBadgeText}>{blurToLabel(effectiveBlur)}</Text>
             </View>
@@ -761,6 +756,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
           <GuessInput
             onSubmit={handleGuess}
             attemptsLeft={attemptsLeft}
+            maxAttempts={state.maxAttempts}
             extraTitles={categoryTitles}
           />
         )}
@@ -997,9 +993,9 @@ function ClarityMeter({ blurRadius }: { blurRadius: number }) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function blurToLabel(blur: number): string {
-  if (blur <= 2)   return 'HD';
-  if (blur >= 22)  return '8px';
-  if (blur >= 16)  return '16px';
-  if (blur >= 10)  return '32px';
-  return '64px';
+  if (blur === 0)  return 'HD';
+  if (blur <= 5)   return 'Clair';
+  if (blur <= 12)  return '32px';
+  if (blur <= 22)  return '16px';
+  return '8px';
 }

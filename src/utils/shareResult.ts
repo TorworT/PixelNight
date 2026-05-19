@@ -35,7 +35,7 @@ export interface ShareParams {
 
 function buildShareText(p: ShareParams): string {
   const won          = p.status === 'won';
-  const maxAttempts  = p.hasWatchedAdForExtra ? 4 : 3;
+  const maxAttempts  = p.hasWatchedAdForExtra ? 6 : 5;
   const usedAttempts = p.attempts.length;
   const grid         = buildGrid(p.attempts);
 

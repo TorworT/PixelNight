@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   View,
   Text,
+  Image,
   SectionList,
   ScrollView,
   StyleSheet,
@@ -11,7 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '../utils/haptics';
 
 import { supabase, DailyGameRow, resolveImageUrl } from '../lib/supabase';
 import { SubscriptionScreen } from './SubscriptionScreen';
@@ -26,6 +27,7 @@ import { useAuthContext } from '../context/AuthContext';
 import { addCoins } from '../lib/profiles';
 import { loadJSON, saveJSON } from '../utils/storage';
 import { getDateString } from '../utils/dateUtils';
+import { isAnswerCorrect } from '../utils/normalizeAnswer';
 import type { Game } from '../constants/games';
 import type { Attempt, GameStatus } from '../hooks/useGameState';
 import { playVictorySound, playDefeatSound } from '../utils/pixelSound';
@@ -48,19 +50,23 @@ interface PlayedResult {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MAX_ATTEMPTS     = 3;
+const MAX_ATTEMPTS     = 5;
 const MAX_HINTS        = 3;
 const MAX_COINS_REWARD = 10;
 
-const BLUR_MAX            = 28;
-const BLUR_MIN            = 4;
-const BLUR_DEFEAT_PARTIAL = 14;
+const BLUR_MAX = 28;
+// Progression fixe sur 5 essais (% de BLUR_MAX) :
+//   essai 1 → 85% (24)  essai 2 → 75% (21)  essai 3 → 60% (17)
+//   essai 4 → 40% (11)  essai 5 → 30% (8)
+// Défaite → 15% (4)   Victoire → 0
+const BLUR_STEPS          = [28, 24, 21, 17, 14, 12] as const;
+const BLUR_DEFEAT_PARTIAL = 12;
 
-/** Métadonnées par catégorie : libellé, emoji, couleur d'accent. */
-const CATEGORY_INFO: Record<string, { label: string; emoji: string; color: string }> = {
-  games:        { label: 'Jeux Vidéo',   emoji: '🎮', color: '#e94560' },
-  anime:        { label: 'Animé',        emoji: '⭐', color: '#a855f7' },
-  dessinsanime: { label: 'Dessin Animé', emoji: '🎨', color: '#f97316' },
+/** Métadonnées par catégorie : libellé, image locale, couleur d'accent. */
+const CATEGORY_INFO: Record<string, { label: string; emoji: string; image?: ReturnType<typeof require>; color: string }> = {
+  games:        { label: 'Jeux Vidéo',   emoji: '🎮', image: require('../../assets/images/Icones/icon-games.png'),       color: '#e94560' },
+  anime:        { label: 'Animé',        emoji: '⭐', image: require('../../assets/images/Icones/icon-anime.png'),        color: '#a855f7' },
+  dessinsanime: { label: 'Dessin Animé', emoji: '🎨', image: require('../../assets/images/Icones/icon-dessinsanime.png'), color: '#f97316' },
 };
 
 /** Catégories récupérées depuis Supabase. */
@@ -77,19 +83,10 @@ const INITIAL_GS: InfiniteGameState = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
 
 function computeBlur(gs: InfiniteGameState): number {
   if (gs.status === 'playing') {
-    const step = (BLUR_MAX - BLUR_MIN) / Math.max(gs.maxAttempts, 1);
-    return Math.max(BLUR_MIN, Math.round(BLUR_MAX - gs.attempts.length * step));
+    return BLUR_STEPS[Math.min(gs.attempts.length, BLUR_STEPS.length - 1)];
   }
   if (gs.status === 'lost') return gs.defeatAccepted ? 0 : BLUR_DEFEAT_PARTIAL;
   return 0; // won
@@ -507,8 +504,7 @@ export function InfiniteScreen() {
     if (gs.attempts.length >= gs.maxAttempts) return;
 
     const isCorrect =
-      normalize(guess) === normalize(game.title) ||
-      (game.aliases ?? []).some((a) => normalize(guess) === normalize(a));
+      isAnswerCorrect(guess, game.title, game.aliases ?? []);
 
     const newAttempts: Attempt[] = [...gs.attempts, { text: guess, isCorrect }];
 
@@ -1014,7 +1010,10 @@ function YearCard({ year, stats, onPress, styles, colors }: YearCardProps) {
                 key={cat}
                 style={[styles.catBadge, { borderColor: info.color + '55', backgroundColor: info.color + '18' }]}
               >
-                <Text style={{ fontSize: 10 }}>{info.emoji}</Text>
+                {info.image
+                  ? <Image source={info.image} style={{ width: 12, height: 12, resizeMode: 'contain' }} />
+                  : <Text style={{ fontSize: 10 }}>{info.emoji}</Text>
+                }
                 <Text style={[styles.catBadgeText, { color: info.color }]}>{count}</Text>
               </View>
             );
@@ -1064,7 +1063,10 @@ function PastGameCard({ row, result, onPress, styles, colors }: PastGameCardProp
       <View style={styles.cardBody}>
         {/* Badge catégorie */}
         <View style={[styles.catBadge, { borderColor: catInfo.color + '55', backgroundColor: catInfo.color + '18' }]}>
-          <Text style={{ fontSize: 10 }}>{catInfo.emoji}</Text>
+          {catInfo.image
+            ? <Image source={catInfo.image} style={{ width: 12, height: 12, resizeMode: 'contain' }} />
+            : <Text style={{ fontSize: 10 }}>{catInfo.emoji}</Text>
+          }
           <Text style={[styles.catBadgeText, { color: catInfo.color }]}>{catInfo.label}</Text>
         </View>
 

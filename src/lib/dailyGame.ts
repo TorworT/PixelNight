@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import { supabase, DailyGameRow, resolveImageUrl } from './supabase';
 import { Game, GAMES } from '../constants/games';
 import { getDateString, getDayIndex } from '../utils/dateUtils';
@@ -41,6 +42,44 @@ function networkTimeout(ms: number): Promise<never> {
   return new Promise((_, reject) =>
     setTimeout(() => reject(new Error('network_timeout')), ms),
   );
+}
+
+/**
+ * Date réelle du calendrier (YYYY-MM-DD, heure locale) sans pivot de 7h.
+ * Utilisée en seconde tentative quand getDateString() (avec pivot) ne trouve rien
+ * — typiquement avant 7h du matin où pivot = hier mais Supabase a la date du jour.
+ */
+function getRealDateString(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Tente une requête Supabase pour une date et une catégorie données.
+ * Retourne la ligne trouvée ou null (sans throw) si absent ou erreur.
+ */
+async function fetchRowForDate(
+  dateStr:  string,
+  category: string,
+): Promise<DailyGameRow | null> {
+  try {
+    const { data, error } = await Promise.race([
+      supabase
+        .from('daily_games')
+        .select('*')
+        .eq('date', dateStr)
+        .eq('category', category)
+        .single(),
+      networkTimeout(5000),
+    ]);
+    if (error || !data) return null;
+    return data as DailyGameRow;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -100,17 +139,26 @@ export async function fetchDailyGame(category = 'games'): Promise<DailyGameResul
   }
 
   try {
-    const today = getDateString();
+    const pivotDate = getDateString();     // Date avec pivot 7h (peut être hier avant 7h)
+    const realDate  = getRealDateString(); // Date réelle du calendrier (toujours aujourd'hui)
 
-    const { data, error } = await Promise.race([
-      supabase.from('daily_games').select('*').eq('date', today).eq('category', category).single(),
-      networkTimeout(5000),
-    ]);
+    // ── Essai 1 : date avec pivot (comportement normal — même jeu toute la nuit) ──
+    let row = await fetchRowForDate(pivotDate, category);
 
-    if (error) throw error;
-    if (!data) throw new Error('No daily_games row for today');
+    // ── Essai 2 : si rien trouvé ET les dates diffèrent (= avant 7h du matin),
+    //    tente avec la date réelle — couvre le cas où Supabase n'a pas d'entrée
+    //    pour hier mais a déjà celle d'aujourd'hui. ──────────────────────────────
+    if (!row && realDate !== pivotDate) {
+      row = await fetchRowForDate(realDate, category);
+    }
 
-    const game = rowToGame(data as DailyGameRow, category);
+    if (!row) {
+      throw new Error(
+        `Aucune entrée Supabase pour "${category}" aux dates ${pivotDate}${realDate !== pivotDate ? ` et ${realDate}` : ''}`,
+      );
+    }
+
+    const game = rowToGame(row, category);
 
     // Vérifie que l'image est accessible avant de mettre en cache et de servir.
     // En cas de 404 ou timeout → fallback local (pas de cache pour forcer un
@@ -123,7 +171,8 @@ export async function fetchDailyGame(category = 'games'): Promise<DailyGameResul
     await writeCache(game, category);
     return { game, source: 'supabase' };
 
-  } catch {
+  } catch (err: any) {
+    Alert.alert('FALLBACK', `Erreur: ${err?.message ?? String(err)} — catégorie: ${category}`);
     const game = GAMES[Math.abs(getDayIndex()) % GAMES.length];
     return { game, source: 'local_fallback' };
   }

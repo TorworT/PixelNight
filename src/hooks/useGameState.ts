@@ -3,6 +3,7 @@ import { Game, GAMES } from '../constants/games';
 import { getDateString, getDayIndex } from '../utils/dateUtils';
 import { loadJSON, saveJSON } from '../utils/storage';
 import { fetchDailyGame, GameSource } from '../lib/dailyGame';
+import { isAnswerCorrect } from '../utils/normalizeAnswer';
 
 export interface Attempt {
   text: string;
@@ -32,21 +33,17 @@ export interface PersistedState {
   powerups:             Powerups;
 }
 
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 5;
 const MAX_HINTS    = 3;
 
-function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
 
 const BLUR_MAX = 28;
-const BLUR_MIN = 4;
-const BLUR_DEFEAT_PARTIAL = 14;
+// Progression fixe sur 5 essais (% de BLUR_MAX) :
+//   essai 1 → 85% (24)  essai 2 → 75% (21)  essai 3 → 60% (17)
+//   essai 4 → 50% (14)  essai 5 → 43% (12)
+// Défaite → 43% (12)   Victoire → 0
+const BLUR_STEPS          = [28, 24, 21, 17, 14, 12, 6, 3] as const; // index = nb essais utilisés (0‥7)
+const BLUR_DEFEAT_PARTIAL = 12;
 
 function computeBlurRadius(
   attemptsUsed:        number,
@@ -56,14 +53,11 @@ function computeBlurRadius(
   defeatAccepted:      boolean,
 ): number {
   if (status === 'playing') {
-    const step = (BLUR_MAX - BLUR_MIN) / Math.max(maxAttempts, 1);
-    return Math.max(BLUR_MIN, Math.round(BLUR_MAX - attemptsUsed * step));
+    return BLUR_STEPS[Math.min(attemptsUsed, BLUR_STEPS.length - 1)];
   }
   if (status === 'lost') {
     // L'image ne se révèle QUE quand le joueur accepte explicitement la défaite.
-    // hasWatchedAdForExtra n'affecte PAS le flou — sinon l'image révèle dès
-    // que le joueur perd le 4ème essai après avoir regardé la pub.
-    return defeatAccepted ? 2 : BLUR_DEFEAT_PARTIAL;
+    return defeatAccepted ? 0 : BLUR_DEFEAT_PARTIAL;
   }
   return 0;
 }
@@ -85,16 +79,17 @@ const INITIAL_STATE: PersistedState = {
   powerups:             INITIAL_POWERUPS,
 };
 
-export function useGameState(category = 'games') {
+export function useGameState(category = 'games', initialMaxAttempts: number = MAX_ATTEMPTS) {
   const [game, setGame]             = useState<Game | null>(null);
   const [state, setState]           = useState<PersistedState>(INITIAL_STATE);
   const [isLoading, setIsLoading]   = useState(true);
   const [gameSource, setGameSource] = useState<GameSource | null>(null);
 
-  // 'games' keeps the original key format for backward compatibility
+  // v2 : force le rechargement depuis Supabase (invalide le cache v1 potentiellement
+  // corrompu avec un fallback jeux vidéo pour les catégories anime/dessinsanime)
   const storageKey = category === 'games'
-    ? `pixelnight_${getDateString()}`
-    : `pixelnight_${category}_${getDateString()}`;
+    ? `pixelnight_v2_${getDateString()}`
+    : `pixelnight_v2_${category}_${getDateString()}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -118,11 +113,17 @@ export function useGameState(category = 'games') {
       setGame(result.game);
       setGameSource(result.source);
       if (saved) {
+        // maxAttempts : prend le max entre la valeur sauvée (peut être > base si extraLife
+        // ou pub utilisés en cours de partie) et initialMaxAttempts (tier de l'abonné).
+        const effectiveMax = Math.max(saved.maxAttempts ?? MAX_ATTEMPTS, initialMaxAttempts);
         setState({
           ...INITIAL_STATE,
           ...saved,
+          maxAttempts: effectiveMax,
           powerups: saved.powerups ?? INITIAL_POWERUPS,
         });
+      } else {
+        setState({ ...INITIAL_STATE, maxAttempts: initialMaxAttempts });
       }
       setIsLoading(false);
     }
@@ -139,10 +140,8 @@ export function useGameState(category = 'games') {
     if (!game || state.status !== 'playing') return;
     if (state.attempts.length >= state.maxAttempts) return;
 
-    // ✅ Vérifie le titre principal ET les aliases
-    const isCorrect =
-      normalize(guess) === normalize(game.title) ||
-      (game.aliases ?? []).some((alias) => normalize(guess) === normalize(alias));
+    // ✅ Vérifie le titre principal ET les aliases (insensible casse/accents/chiffres romains)
+    const isCorrect = isAnswerCorrect(guess, game.title, game.aliases ?? []);
 
     const newAttempts: Attempt[] = [...state.attempts, { text: guess, isCorrect }];
 
