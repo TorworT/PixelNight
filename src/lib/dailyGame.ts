@@ -1,4 +1,4 @@
-import { Alert } from 'react-native';
+import { Alert, Image } from 'react-native';
 import { supabase, DailyGameRow, resolveImageUrl } from './supabase';
 import { Game, GAMES } from '../constants/games';
 import { getDateString, getDayIndex } from '../utils/dateUtils';
@@ -112,6 +112,17 @@ async function fetchAndCacheForDate(dateStr: string, category = 'games'): Promis
   }
 }
 
+/**
+ * Précharge en arrière-plan les 5 versions pixelisées (_1 à _5) d'une image .jpg.
+ * Fire-and-forget — ne bloque jamais l'appelant.
+ */
+function prefetchPixelizedImages(imageUrl: string): void {
+  if (!imageUrl.toLowerCase().endsWith('.jpg')) return;
+  const base = imageUrl.slice(0, -4);
+  const urls = [1, 2, 3, 4, 5].map((i) => `${base}_${i}.jpg`);
+  Promise.all(urls.map((u) => Image.prefetch(u))).catch(() => {});
+}
+
 export async function prefetchUpcomingGames(days = 7, category = 'games'): Promise<void> {
   const today = new Date();
   const fetches: Promise<void>[] = [];
@@ -135,6 +146,7 @@ export async function prefetchUpcomingGames(days = 7, category = 'games'): Promi
 export async function fetchDailyGame(category = 'games'): Promise<DailyGameResult> {
   const cached = await readCache(category);
   if (cached) {
+    prefetchPixelizedImages(cached.imageUrl);
     return { game: cached, source: 'cache' };
   }
 
@@ -169,6 +181,7 @@ export async function fetchDailyGame(category = 'games'): Promise<DailyGameResul
     }
 
     await writeCache(game, category);
+    prefetchPixelizedImages(game.imageUrl);
     return { game, source: 'supabase' };
 
   } catch (err: any) {

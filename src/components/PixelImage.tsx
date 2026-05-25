@@ -18,6 +18,16 @@ interface Props {
    * par-dessus l'image pixelisée.
    */
   revealZone?: boolean;
+  /**
+   * Index de tentative (1–5) : charge automatiquement la version pré-pixelisée
+   * correspondante en remplaçant `.jpg` par `_1.jpg`, `_2.jpg`, etc.
+   * Valeur ≥ 6 (ou absente) → image originale sans suffixe.
+   */
+  attemptIndex?: number;
+  /** Appelé dès que le chargement de l'image démarre. */
+  onLoadStart?: () => void;
+  /** Appelé quand l'image est entièrement chargée (ou en erreur). */
+  onLoadEnd?: () => void;
 }
 
 const CELL = 18; // taille d'une cellule de la grille en dp
@@ -26,24 +36,47 @@ const CELL = 18; // taille d'une cellule de la grille en dp
 const REVEAL_RATIO = 0.42;
 
 /**
+ * Résout l'URI de l'image pré-pixelisée selon l'index de tentative.
+ * - attemptIndex 1–5 : remplace `.jpg` par `_N.jpg`
+ * - attemptIndex ≥ 6 ou absent : URI originale (image révélée / pas de suffixe)
+ * - URI non-jpg : inchangée dans tous les cas
+ */
+function resolvePixelUri(uri: string, attemptIndex?: number): string {
+  if (attemptIndex === undefined) return uri;
+  if (!uri.toLowerCase().endsWith('.jpg')) return uri;
+  const suffix = Math.min(5, attemptIndex);
+  return `${uri.slice(0, -4)}_${suffix}.jpg`;
+}
+
+/**
  * Affiche une capture de jeu avec effet de pixelisation (blurRadius).
  * En cas d'erreur de chargement, bascule automatiquement sur `fallbackUri`.
  */
-export function PixelImage({ uri, blurRadius, width, height, fallbackUri, revealZone }: Props) {
+export function PixelImage({ uri, blurRadius, width, height, fallbackUri, revealZone, attemptIndex, onLoadStart: onLoadStartProp, onLoadEnd: onLoadEndProp }: Props) {
   const [loading, setLoading]           = useState(true);
   const [hasError, setHasError]         = useState(false);
   const [activeFallback, setActiveFallback] = useState(false);
   const isOnline = useNetworkStatus();
 
-  const activeUri = activeFallback && fallbackUri ? fallbackUri : uri;
+  // URI effective : version pré-pixelisée si attemptIndex fourni, originale sinon.
+  // Le fallback (Steam CDN / asset local) utilise toujours l'URI originale.
+  const pixelUri  = resolvePixelUri(uri, attemptIndex);
+  const activeUri = activeFallback && fallbackUri ? fallbackUri : pixelUri;
+
+  // Si une image pré-pixelisée est chargée (pixelUri differ de uri original),
+  // le flou gaussien natif est désactivé — la pixelisation par blocs suffit.
+  const effectiveBlurRadius = pixelUri !== uri ? 0 : blurRadius;
+
 
   const handleLoadStart = () => {
     setLoading(true);
+    onLoadStartProp?.();
   };
 
   const handleLoadEnd = () => {
     setLoading(false);
     setHasError(false);
+    onLoadEndProp?.();
   };
 
   const handleError = (_e: any) => {
@@ -70,7 +103,7 @@ export function PixelImage({ uri, blurRadius, width, height, fallbackUri, reveal
         key={activeUri}
         source={{ uri: activeUri }}
         style={StyleSheet.absoluteFill}
-        blurRadius={Math.round(blurRadius)}
+        blurRadius={Math.round(effectiveBlurRadius)}
         resizeMode="cover"
         onLoadStart={handleLoadStart}
         onLoadEnd={handleLoadEnd}
@@ -78,7 +111,7 @@ export function PixelImage({ uri, blurRadius, width, height, fallbackUri, reveal
       />
 
       {/* Power-up: Zone HD — unblurred centre window */}
-      {revealZone && blurRadius > 0 && (
+      {revealZone && effectiveBlurRadius > 0 && (
         <View
           style={[
             styles.revealWindow,
@@ -102,11 +135,11 @@ export function PixelImage({ uri, blurRadius, width, height, fallbackUri, reveal
       )}
 
       {/* Grille pixel — s'estompe quand le blur diminue */}
-      {blurRadius > 5 && (
+      {effectiveBlurRadius > 5 && (
         <PixelGrid
           width={width}
           height={height}
-          opacity={Math.min(0.35, (blurRadius - 5) / 23)}
+          opacity={Math.min(0.35, (effectiveBlurRadius - 5) / 23)}
         />
       )}
 

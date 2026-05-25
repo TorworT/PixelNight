@@ -23,6 +23,8 @@ interface Props {
   extraTitles?: string[];
   /** Titres à exclure de l'autocomplete (power-up "Éliminer ×3"). */
   excludedTitles?: string[];
+  /** Placeholder du champ de saisie — adapté à la catégorie courante. */
+  placeholder?: string;
 }
 
 function normalize(s: string) {
@@ -95,7 +97,7 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
   });
 }
 
-export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, extraTitles = [], excludedTitles = [] }: Props) {
+export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, extraTitles = [], excludedTitles = [], placeholder = 'Entrez un nom de jeu…' }: Props) {
   const [value, setValue] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const { colors, fontFamily } = useTheme();
@@ -177,7 +179,7 @@ export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, extraTitle
           style={styles.input}
           value={value}
           onChangeText={handleChange}
-          placeholder="Entrez un nom de jeu…"
+          placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
           returnKeyType="done"
           onSubmitEditing={submit}

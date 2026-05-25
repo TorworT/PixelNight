@@ -315,30 +315,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const online = net.isConnected !== false;
 
       if (online) {
-        // ── Validation du token côté serveur ────────────────────────────────
-        // getSession() lit AsyncStorage sans valider avec Supabase : un token
-        // périmé ou révoqué peut passer silencieusement.
-        // refreshSession() échange le token avec le serveur et garantit sa validité.
-        const { error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError) {
-          console.error('[AuthContext] runStartup — refreshSession failed:', refreshError.message);
-          await clearAllSessionData(s.user.id);
-          await supabase.auth.signOut();
-          if (mountedRef.current) { setSession(null); setAuthLoading(false); }
-          return;
-        }
+        // getSession() gère déjà le refresh du token automatiquement quand
+        // nécessaire — un appel supplémentaire à refreshSession() créait des
+        // conflits et déconnectait les utilisateurs après chaque redémarrage.
 
         // En ligne : profil frais depuis Supabase (fetchProfile gère les erreurs et retries)
         await maybeTransferGuestData(s.user.id);
         const loadedProfile = await fetchProfile(s.user.id);
 
-        // ── Détection état corrompu post-fetch ─────────────────────────────
-        // Si le profil est null ou invalide après un fetch en ligne réussi,
-        // c'est un état anormal (compte supprimé, données corrompues, etc.).
-        // → déconnexion propre pour repartir de zéro plutôt que laisser
-        //   l'utilisateur bloqué avec 0 pièces et aucune action possible.
+        // ── Déconnexion uniquement si fetchProfile ET getProfile échouent tous les deux ──
+        // fetchProfile fait déjà 1 retry interne avant de retourner null.
+        // On ne déconnecte que si le profil est vraiment introuvable (compte supprimé).
         if (!loadedProfile || isProfileCorrupted(loadedProfile)) {
-          console.error('[AuthContext] runStartup — profil null/corrompu après fetch, déconnexion forcée');
+          console.warn('[AuthContext] runStartup — profil null après fetch+retry, déconnexion');
           await clearAllSessionData(s.user.id);
           await supabase.auth.signOut();
           if (mountedRef.current) { setSession(null); setProfile(null); setAuthLoading(false); }
@@ -350,6 +339,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Hors ligne : profil depuis le cache local
         const cached = await loadCachedProfile(s.user.id);
+
         if (isProfileCorrupted(cached)) {
           // Cache corrompu et pas de réseau → on l'efface, l'utilisateur verra un état vide
           // mais au prochain lancement en ligne, fetchProfile repartira proprement.
@@ -392,10 +382,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Race : séquence de démarrage vs timeout de 5 s
     // Dans tous les cas, setAuthLoading(false) est appelé en ≤ 5 s.
-    Promise.race([
-      runStartup().catch(() => { if (mountedRef.current) setOfflineStart(true); }),
-      new Promise<void>((resolve) => setTimeout(resolve, STARTUP_TIMEOUT_MS)),
-    ]).finally(() => {
+    const startupPromise = runStartup()
+      .catch(() => { if (mountedRef.current) setOfflineStart(true); });
+    const timeoutPromise = new Promise<void>((resolve) =>
+      setTimeout(resolve, STARTUP_TIMEOUT_MS),
+    );
+    Promise.race([startupPromise, timeoutPromise]).finally(() => {
       if (mountedRef.current) setAuthLoading(false);
     });
 

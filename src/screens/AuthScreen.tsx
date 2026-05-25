@@ -104,14 +104,19 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     cornerBR: { position: 'absolute', bottom: CORNER, right: CORNER },
 
     // Logo
-    logoRow: { flexDirection: 'row', alignItems: 'baseline', gap: SPACING.xs },
+    logoRow: { 
+	flexDirection: 'row',
+	alignItems: 'baseline', 
+	gap: SPACING.xs,
+	flexShrink: 1,
+	 },
     logoPIXEL: {
-      color: colors.text, fontSize: 38, fontWeight: FONTS.weight.black,
-      fontFamily: ff ?? 'monospace', letterSpacing: 6,
+      color: colors.text, fontSize: 34, fontWeight: FONTS.weight.black,
+      fontFamily: ff ?? 'monospace', letterSpacing: 3,
     },
     logoNIGHT: {
-      color: colors.accent, fontSize: 38, fontWeight: FONTS.weight.black,
-      fontFamily: ff ?? 'monospace', letterSpacing: 6,
+      color: colors.accent, fontSize: 34, fontWeight: FONTS.weight.black,
+      fontFamily: ff ?? 'monospace', letterSpacing: 3,
     },
     tagline: {
       color: colors.textMuted, fontSize: FONTS.size.xs,

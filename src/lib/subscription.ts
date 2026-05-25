@@ -84,13 +84,12 @@ export async function initRevenueCat(): Promise<void> {
     const configured = await Purchases.isConfigured();
     console.log('[subscription] initRevenueCat → isConfigured:', configured);
   }
-
 }
 
 /**
  * Retourne le tier d'abonnement actif de l'utilisateur.
  * Priorité : legend > pro > basic > free.
- * Retourne 'free' en cas d'erreur ou d'absence d'abonnement.
+ * Retourne 'free' en cas d'erreur, de timeout ou d'absence d'abonnement.
  *
  * Synchronise silencieusement profiles.subscription_tier côté Supabase afin
  * que le badge apparaisse dans le classement pour tous les joueurs.
@@ -98,7 +97,21 @@ export async function initRevenueCat(): Promise<void> {
 export async function getSubscriptionTier(): Promise<SubscriptionTier> {
   if (Platform.OS !== 'android' && Platform.OS !== 'ios') return 'free';
   try {
-    const info = await Purchases.getCustomerInfo();
+    // Timeout de 3s pour éviter de bloquer le démarrage si RC est lent ou indisponible
+    const rcTimeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), 3000)
+    );
+
+    const info = await Promise.race([
+      Purchases.getCustomerInfo(),
+      rcTimeout,
+    ]);
+
+    if (!info) {
+      console.warn('[subscription] getSubscriptionTier — timeout RC (3s), fallback free');
+      return 'free';
+    }
+
     const tier = tierFromCustomerInfo(info);
     // Sync non-bloquante — échoue silencieusement si hors ligne ou non authentifié
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -343,7 +356,7 @@ export interface ClaimDailyCoinsResult {
  * | free   | 0           |
  * | basic  | 0           |
  * | pro    | 20          |
- * | legend | 50          |
+ * | legend | 100         |
  *
  * La vérification et le crédit sont **atomiques** côté serveur via la RPC
  * `claim_daily_coins` (voir supabase/daily_coins_migration.sql).

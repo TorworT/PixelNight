@@ -24,13 +24,28 @@ const { width: W } = Dimensions.get('window');
 // ─── Config des catégories ────────────────────────────────────────────────────
 
 interface Category {
-  id:        string;
-  image?:    ReturnType<typeof require>; // image locale (require)
-  emoji:     string;                    // fallback si pas d'image
-  title:     string;
-  subtitle:  string;
-  color:     string;
-  available: boolean;
+  id:           string;
+  image?:       ReturnType<typeof require>; // image locale (require)
+  emoji:        string;                    // fallback si pas d'image
+  title:        string;
+  subtitle:     string;
+  color:        string;
+  available:    boolean;
+  /** Libellé du badge pour les catégories à date connue (ex: '🔜 1er juin'). */
+  launchLabel?: string;
+}
+
+// ─── Dates de lancement planifiées ───────────────────────────────────────────
+
+/** Dates de déverrouillage automatique (heure locale). */
+const LAUNCH_DATES: Record<string, Date> = {
+  cinema: new Date(2026, 5, 1, 7, 0, 0), // 1er juin 2026 à 07h00 local
+};
+
+/** Retourne true si la catégorie est déverrouillée à l'instant présent. */
+function isLaunched(id: string): boolean {
+  const date = LAUNCH_DATES[id];
+  return date ? new Date() >= date : false;
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -268,7 +283,7 @@ function CategoryCard({ cat, onPress }: { cat: Category; onPress: () => void }) 
             </Text>
             {!cat.available && (
               <View style={styles.soonBadge}>
-                <Text style={styles.soonText}>À venir</Text>
+                <Text style={styles.soonText}>{cat.launchLabel ?? 'À venir'}</Text>
               </View>
             )}
           </View>
@@ -347,12 +362,13 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
     },
     // ── À venir ───────────────────────────────────────────────────────────────
     {
-      id:       'cinema',
-      emoji:    '🎬',
-      title:    'Cinéma',
-      subtitle: 'Bientôt disponible',
-      color:    colors.info,
-      available: false,
+      id:          'cinema',
+      emoji:       '🎬',
+      title:       'Cinéma',
+      subtitle:    'Retrouve les films pixelisés !',
+      color:       colors.info,
+      available:   isLaunched('cinema'),
+      launchLabel: isLaunched('cinema') ? undefined : '🔜 1er juin',
     },
     {
       id:       'serie',

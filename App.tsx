@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { StyleSheet, View, Animated, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Animated, ActivityIndicator, Text, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 
 import { AuthProvider, useAuthContext } from './src/context/AuthContext';
+import { supabase }                     from './src/lib/supabase';
 import { ThemeProvider, useThemeColors } from './src/context/ThemeContext';
 import { GameStateProvider }             from './src/context/GameStateContext';
 import { ComingSoonScreen }              from './src/screens/ComingSoonScreen';
@@ -384,10 +385,10 @@ function InnerApp() {
         <CategoryScreen
           onSelectCategory={(id) => {
             // Catégories actives → lancement direct du jeu
-            if (id === 'games' || id === 'anime' || id === 'dessinsanime') {
+            if (id === 'games' || id === 'anime' || id === 'dessinsanime' || id === 'cinema') {
               goGame(id);
             } else {
-              // Catégories non encore disponibles (ex: cinema) → écran "À venir"
+              // Catégories non encore disponibles → écran "À venir"
               goComingSoon({ label: 'Cinéma', icon: 'film-outline' });
             }
           }}
@@ -461,38 +462,77 @@ function InnerApp() {
   );
 }
 
-// ─── Cache versioning ─────────────────────────────────────────────────────────
+// ─── Versioning & cache ───────────────────────────────────────────────────────
 
 /**
- * À incrémenter à chaque `eas update` qui modifie la structure du cache local.
- * Quand la version stockée dans AsyncStorage diffère de cette constante,
- * toutes les clés non-auth sont supprimées avant le montage de AuthProvider.
- * L'utilisateur reste connecté (clés Supabase préservées) mais repart sur
- * un cache propre, sans état corrompu.
+ * Version applicative — à incrémenter à chaque `eas update`.
+ * Format suggéré : '1.0.8-b', '1.0.8-c', '1.0.9', etc.
+ *
+ * Quand la version change :
+ *   • enforceVersionGate() déconnecte l'utilisateur et affiche une alerte
+ *     UNE SEULE FOIS pour qu'il se reconnecte proprement.
+ *   • clearStaleCache() purge toutes les clés de cache non-auth.
  */
-const CACHE_VERSION = '1.0.8';
+const APP_VERSION   = '1.0.8-b';
+const CACHE_VERSION = '1.0.8-b'; // gardé en sync avec APP_VERSION
 
+/**
+ * Détecte une nouvelle version au premier lancement post-update.
+ * Si la version stockée diffère d'APP_VERSION :
+ *   1. Met à jour la version dans AsyncStorage
+ *   2. Déconnecte via supabase.auth.signOut() (efface la session locale)
+ *   3. Affiche une Alert informative une seule fois
+ * L'utilisateur atterrit ensuite sur l'écran de connexion normalement.
+ */
+async function enforceVersionGate(): Promise<void> {
+  try {
+    const stored = await AsyncStorage.getItem('pn_app_version');
+    if (stored === APP_VERSION) return; // même version, rien à faire
+
+    if (__DEV__) console.log(`[version] update détectée ${stored ?? 'null'} → ${APP_VERSION}`);
+
+    // 1. Mémorise la nouvelle version avant tout
+    await AsyncStorage.setItem('pn_app_version', APP_VERSION);
+
+    // 2. Déconnexion propre (efface la session Supabase du stockage local)
+    await supabase.auth.signOut();
+
+    // 3. Alerte unique — non-bloquante, l'app continue vers le login
+    Alert.alert(
+      '🔄 Application mise à jour',
+      'PixelNight a été mis à jour. Veuillez vous reconnecter pour continuer.',
+      [{ text: 'Se reconnecter', style: 'default' }],
+    );
+  } catch (err) {
+    if (__DEV__) console.warn('[version] enforceVersionGate failed:', err);
+  }
+}
+
+/**
+ * Purge les clés de cache non-auth quand CACHE_VERSION change.
+ * Les clés Supabase / auth sont toujours préservées.
+ */
 async function clearStaleCache(): Promise<void> {
   try {
     const stored = await AsyncStorage.getItem('pn_cache_version');
     if (stored === CACHE_VERSION) return; // cache à jour, rien à faire
 
-    const keys      = await AsyncStorage.getAllKeys();
-    const toDelete  = keys.filter((k) =>
-      k !== 'pn_cache_version'  &&   // ne pas supprimer la clé de version elle-même
+    const keys     = await AsyncStorage.getAllKeys();
+    const toDelete = keys.filter((k) =>
+      k !== 'pn_cache_version'  &&   // clé de version du cache
+      k !== 'pn_app_version'    &&   // clé de version de l'app
       !k.includes('supabase')   &&   // session Supabase
       !k.includes('auth')       &&   // tokens auth
-      !k.includes('sb-'),            // clés internes Supabase (sb-*-auth-token, etc.)
+      !k.includes('sb-'),            // clés internes Supabase (sb-*-auth-token…)
     );
 
     if (toDelete.length > 0) await AsyncStorage.multiRemove(toDelete);
     await AsyncStorage.setItem('pn_cache_version', CACHE_VERSION);
 
     if (__DEV__) {
-      console.log(`[cache] purge v${CACHE_VERSION} — ${toDelete.length} clé(s) supprimée(s) :`, toDelete);
+      console.log(`[cache] purge v${CACHE_VERSION} — ${toDelete.length} clé(s) :`, toDelete);
     }
   } catch (err) {
-    // Non-bloquant : si la purge échoue, l'app continue normalement
     if (__DEV__) console.warn('[cache] clearStaleCache failed:', err);
   }
 }
@@ -503,10 +543,11 @@ function ThemedRoot() {
   const themeColors = useThemeColors();
   const [cacheReady, setCacheReady] = useState(false);
 
-  // Purge le cache obsolète AVANT que AuthProvider monte et lise AsyncStorage.
-  // Garantit qu'il n'y a aucune course entre la purge et getSession().
+  // Exécute la détection de version ET la purge du cache AVANT que AuthProvider
+  // monte et lise AsyncStorage — garantit zéro course avec getSession().
   useEffect(() => {
-    clearStaleCache().finally(() => setCacheReady(true));
+    Promise.all([enforceVersionGate(), clearStaleCache()])
+      .finally(() => setCacheReady(true));
   }, []);
 
   if (!cacheReady) {

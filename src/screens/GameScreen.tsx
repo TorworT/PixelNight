@@ -213,6 +213,27 @@ function censorTitle(title: string): string {
     .join(' ');
 }
 
+// ─── Bonus pièces selon l'image affichée ─────────────────────────────────────
+
+/**
+ * Pièces bonus liées à la netteté de l'image pré-pixelisée affichée au moment
+ * de la victoire. Plus le joueur trouve tôt (image très floue), plus le bonus
+ * est élevé.
+ *
+ *   attemptsUsed 1 → image _5 (90px)  → 200 pièces
+ *   attemptsUsed 2 → image _4 (60px)  → 150 pièces
+ *   attemptsUsed 3 → image _3 (40px)  → 100 pièces
+ *   attemptsUsed 4 → image _2 (24px)  →  50 pièces
+ *   attemptsUsed 5+ → image _1 (16px) →  25 pièces
+ */
+function imageBonusCoins(attemptsUsed: number): number {
+  if (attemptsUsed <= 1) return 200;
+  if (attemptsUsed === 2) return 150;
+  if (attemptsUsed === 3) return 100;
+  if (attemptsUsed === 4) return 50;
+  return 25;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function GameScreen({ onBack }: GameScreenProps) {
@@ -238,6 +259,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
   const [coinsAwarded, setCoinsAwarded]  = useState(0);
   const [usingPowerup, setUsingPowerup] = useState<PowerupType | null>(null);
   const [categoryTitles, setCategoryTitles] = useState<string[]>([]);
+  const [imageLoading, setImageLoading]  = useState(true);
 
   // Abonnement actif : lu directement depuis profile.subscription_tier (Supabase).
   // Toute valeur non-free (basic/pro/legend) supprime les publicités.
@@ -274,6 +296,12 @@ export function GameScreen({ onBack }: GameScreenProps) {
 
     return () => { cancelled = true; };
   }, [category]);
+
+  // Réinitialise le spinner image à chaque changement d'image affichée
+  // (nouvelle tentative → nouvel attemptIndex → nouvelle URL pixelisée)
+  useEffect(() => {
+    setImageLoading(true);
+  }, [game?.id, state.attempts.length]);
 
   // Animations
   const shakeX           = useRef(new Animated.Value(0)).current;
@@ -388,6 +416,8 @@ export function GameScreen({ onBack }: GameScreenProps) {
       '| isGuest:', isGuest,
     );
 
+    const imgBonus = imageBonusCoins(attemptsSnap);
+
     // ── Chemin invité : tout en local ──────────────────────────────────────
     if (isGuest) {
       // markScoreSubmitted en premier pour éviter la double soumission
@@ -396,6 +426,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
         .then(() => {
           console.log('[GameScreen] guestWin OK, coins:', coins);
           setCoinsAwarded(coins);
+          showToast(`Bravo ! +${imgBonus} pièces ✨`);
           return refreshGuestProfile();
         })
         .catch((err) => {
@@ -431,14 +462,23 @@ export function GameScreen({ onBack }: GameScreenProps) {
           enqueueGameResult({ won: true, attempts: attemptsSnap, score, coins, newSerie }).catch(() => {});
         }
 
-        // ③ Historique (non bloquant)
+        // ③ Bonus image : pièces supplémentaires selon la netteté de l'image résolue
+        try {
+          await addCoins(imgBonus);
+          console.log('[GameScreen] addCoins imageBonus OK →', imgBonus);
+        } catch (bonusErr) {
+          console.warn('[GameScreen] addCoins imageBonus ERREUR :', bonusErr);
+        }
+        showToast(`Bravo ! +${imgBonus} pièces ✨`);
+
+        // ④ Historique (non bloquant)
         recordGameHistory(true, attemptsSnap, score, coins).catch(() => {});
 
-        // ④ Marquer la soumission après que les opérations critiques sont terminées
+        // ⑤ Marquer la soumission après que les opérations critiques sont terminées
         markScoreSubmitted();
         console.log('[GameScreen] markScoreSubmitted OK');
 
-        // ⑤ Rafraîchir le profil pour mettre à jour coins + série affichés
+        // ⑥ Rafraîchir le profil pour mettre à jour coins + série affichés
         try {
           await refreshProfile();
           console.log('[GameScreen] refreshProfile OK');
@@ -446,7 +486,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
           console.warn('[GameScreen] refreshProfile ERREUR:', refreshErr);
         }
 
-        // ⑥ Demande d'avis éventuelle
+        // ⑦ Demande d'avis éventuelle
         trackWinAndCheckReview()
           .then((should) => { if (should) setShowReview(true); })
           .catch(() => {});
@@ -456,6 +496,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
         console.log('[GameScreen] hors ligne → enqueueGameResult, coins:', coins);
         enqueueGameResult({ won: true, attempts: attemptsSnap, score, coins, newSerie }).catch(() => {});
         setCoinsAwarded(coins);
+        showToast(`Bravo ! +${imgBonus} pièces ✨`);
         markScoreSubmitted();
         refreshProfile().catch(() => {});
       }
@@ -676,11 +717,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
               <Text style={styles.dateLabel}>{getDisplayDate()}</Text>
             </View>
           </View>
-          <View style={styles.headerRight}>
-            <View style={styles.pixelBadge}>
-              <Text style={styles.pixelBadgeText}>{blurToLabel(effectiveBlur)}</Text>
-            </View>
-          </View>
+          <View style={styles.headerRight} />
         </View>
 
         {/* Image */}
@@ -693,7 +730,26 @@ export function GameScreen({ onBack }: GameScreenProps) {
               height={imgH}
               fallbackUri={fallbackImageUri}
               revealZone={state.powerups.revealZone}
+              attemptIndex={
+                state.status === 'won' || state.status === 'lost'
+                  ? 6                              // révélation : image originale
+                  : state.attempts.length + 1      // essai en cours : 1, 2, 3…
+              }
+              onLoadStart={() => setImageLoading(true)}
+              onLoadEnd={() => setImageLoading(false)}
             />
+            {/* Spinner centré sur l'image pendant le chargement */}
+            {imageLoading && (
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card + 'cc' },
+                ]}
+                pointerEvents="none"
+              >
+                <ActivityIndicator color={colors.accent} size="large" />
+              </View>
+            )}
           </Animated.View>
 
           {/* Coin popup */}
@@ -758,6 +814,11 @@ export function GameScreen({ onBack }: GameScreenProps) {
             attemptsLeft={attemptsLeft}
             maxAttempts={state.maxAttempts}
             extraTitles={categoryTitles}
+            placeholder={
+              category === 'anime'        ? 'Entrez un nom d\'animé…' :
+              category === 'dessinsanime' ? 'Entrez un nom de dessin animé…' :
+                                           'Entrez un nom de jeu…'
+            }
           />
         )}
 

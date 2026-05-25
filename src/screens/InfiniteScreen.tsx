@@ -720,6 +720,11 @@ export function InfiniteScreen() {
               onSubmit={handleGuess}
               attemptsLeft={attemptsLeft}
               extraTitles={allTitles}
+              placeholder={
+                selectedRow.category === 'anime'        ? 'Entrez un nom d\'animé…' :
+                selectedRow.category === 'dessinsanime' ? 'Entrez un nom de dessin animé…' :
+                                                          'Entrez un nom de jeu…'
+              }
             />
           )}
 
