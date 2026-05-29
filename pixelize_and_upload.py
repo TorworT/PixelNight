@@ -34,6 +34,7 @@ SOURCES = [
     (ROOT / 'assets/images/2026/Jeux video/2026',   'games'),
     (ROOT / 'assets/images/2026/Dessin animé/2026',  'dessinsanime'),
     (ROOT / 'assets/images/2026/Animé/2026',          'anime'),
+    (ROOT / 'assets/images/2026/Cinema',               'cinema'),
 ]
 
 # Blocs de pixelisation : index 0 → _1 (tres pixelise), index 4 → _5 (presque net)
@@ -108,7 +109,7 @@ def pixelize(img: Image.Image, block: int) -> bytes:
 
 # ─── Collecte ─────────────────────────────────────────────────────────────────
 
-def collect() -> list[tuple[Path, str, str]]:
+def collect(category_filter: str | None = None) -> list[tuple[Path, str, str]]:
     """
     Retourne la liste de toutes les images sources :
       (chemin_local, bucket, chemin_base_dans_bucket)
@@ -117,11 +118,14 @@ def collect() -> list[tuple[Path, str, str]]:
     ex : (…/Août/BanjoTooie.jpg, 'games', 'aout/BanjoTooie.jpg')
 
     Deduplique par stem (prefere .jpg sur .png si les deux existent).
+    Si category_filter est fourni, seul le bucket correspondant est traite.
     """
     tasks: list[tuple[Path, str, str]] = []
     seen:  set[tuple[str, str]] = set()
 
     for src_root, bucket in SOURCES:
+        if category_filter and bucket != category_filter:
+            continue
         if not src_root.exists():
             print(f'[!] Dossier introuvable, ignore : {src_root}')
             continue
@@ -152,8 +156,21 @@ def collect() -> list[tuple[Path, str, str]]:
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    dry_run = '--dry-run' in sys.argv
-    no_skip = '--no-skip' in sys.argv
+    dry_run  = '--dry-run'  in sys.argv
+    no_skip  = '--no-skip'  in sys.argv
+
+    # --category <nom> : traite uniquement le bucket correspondant (ex: cinema, games, anime)
+    category_filter: str | None = None
+    if '--category' in sys.argv:
+        idx = sys.argv.index('--category')
+        if idx + 1 >= len(sys.argv):
+            print('Erreur : --category requiert un argument (ex: --category cinema).')
+            sys.exit(1)
+        category_filter = sys.argv[idx + 1]
+        valid = [bucket for _, bucket in SOURCES]
+        if category_filter not in valid:
+            print(f'Erreur : categorie inconnue "{category_filter}". Valeurs valides : {", ".join(valid)}')
+            sys.exit(1)
 
     if not SUPABASE_SERVICE_KEY:
         print('Erreur : SUPABASE_SERVICE_KEY non defini.')
@@ -163,9 +180,11 @@ def main() -> None:
 
     if dry_run:
         print('Mode DRY-RUN - aucune image generee ni uploadee.\n')
+    if category_filter:
+        print(f'Filtre actif : categorie "{category_filter}" uniquement.\n')
 
     print('Collecte des images...')
-    tasks = collect()
+    tasks = collect(category_filter)
     total = len(tasks) * 5
     print(f'{len(tasks)} images sources -> {total} fichiers\n')
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Image, StyleSheet, ActivityIndicator, Text } from 'react-native';
 import { COLORS, FONTS } from '../constants/theme';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
@@ -32,8 +32,10 @@ interface Props {
 
 const CELL = 18; // taille d'une cellule de la grille en dp
 
-// Zone révélée : 42 % de la largeur / hauteur, centrée
-const REVEAL_RATIO = 0.42;
+// Power-up Zone HD — 20 petits carrés de 30 × 30 px
+const SQUARE_SIZE    = 30;
+const REVEAL_COUNT   = 10;
+const SQUARE_MARGIN  = 4; // marges min par rapport aux bords de l'image
 
 /**
  * Résout l'URI de l'image pré-pixelisée selon l'index de tentative.
@@ -44,8 +46,8 @@ const REVEAL_RATIO = 0.42;
 function resolvePixelUri(uri: string, attemptIndex?: number): string {
   if (attemptIndex === undefined) return uri;
   if (!uri.toLowerCase().endsWith('.jpg')) return uri;
-  const suffix = Math.min(5, attemptIndex);
-  return `${uri.slice(0, -4)}_${suffix}.jpg`;
+  if (attemptIndex >= 6) return uri;           // ≥ 6 → image originale, aucun suffixe
+  return `${uri.slice(0, -4)}_${attemptIndex}.jpg`;
 }
 
 /**
@@ -90,17 +92,22 @@ export function PixelImage({ uri, blurRadius, width, height, fallbackUri, reveal
     }
   };
 
-  // Dimensions of the central reveal window
-  const revealW    = Math.round(width  * REVEAL_RATIO);
-  const revealH    = Math.round(height * REVEAL_RATIO);
-  const revealLeft = Math.round((width  - revealW) / 2);
-  const revealTop  = Math.round((height - revealH) / 2);
+  // Positions aléatoires des 20 carrés — calculées une seule fois par dimensions.
+  const revealSquares = useMemo(() => {
+    if (!revealZone) return [];
+    const maxLeft = Math.max(0, width  - SQUARE_SIZE - SQUARE_MARGIN);
+    const maxTop  = Math.max(0, height - SQUARE_SIZE - SQUARE_MARGIN);
+    return Array.from({ length: REVEAL_COUNT }, () => ({
+      left: SQUARE_MARGIN + Math.floor(Math.random() * (maxLeft - SQUARE_MARGIN)),
+      top:  SQUARE_MARGIN + Math.floor(Math.random() * (maxTop  - SQUARE_MARGIN)),
+    }));
+  }, [revealZone, width, height]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={[styles.container, { width, height }]}>
       {/* Blurred full image */}
       <Image
-        key={activeUri}
+        key={`${activeUri}_${attemptIndex ?? 0}`}
         source={{ uri: activeUri }}
         style={StyleSheet.absoluteFill}
         blurRadius={Math.round(effectiveBlurRadius)}
@@ -110,29 +117,30 @@ export function PixelImage({ uri, blurRadius, width, height, fallbackUri, reveal
         onError={handleError}
       />
 
-      {/* Power-up: Zone HD — unblurred centre window */}
-      {revealZone && effectiveBlurRadius > 0 && (
+      {/* Power-up: Zone HD — 20 petits carrés aléatoires nets */}
+      {revealZone && revealSquares.map((pos, i) => (
         <View
-          style={[
-            styles.revealWindow,
-            { width: revealW, height: revealH, left: revealLeft, top: revealTop },
-          ]}
+          key={i}
+          style={[styles.revealSquare, { left: pos.left, top: pos.top }]}
           pointerEvents="none"
         >
           <Image
-            source={{ uri: activeUri }}
+            source={{ uri: fallbackUri ?? uri }}
+            // fallbackUri (ex: Steam CDN) si disponible → image nette garantie même si
+            // l'original Supabase n'a pas été uploadé (cas JV : seuls _1.jpg–_5.jpg existent).
+            // Pour Animé/Cinéma sans fallback → uri (original dans le bucket).
             style={{
               width,
               height,
               position: 'absolute',
-              left: -revealLeft,
-              top:  -revealTop,
+              left: -pos.left,
+              top:  -pos.top,
             }}
             blurRadius={0}
             resizeMode="cover"
           />
         </View>
-      )}
+      ))}
 
       {/* Grille pixel — s'estompe quand le blur diminue */}
       {effectiveBlurRadius > 5 && (
@@ -226,9 +234,11 @@ const styles = StyleSheet.create({
   errorIcon: { fontSize: 32 },
   errorText: { color: COLORS.textMuted, fontSize: FONTS.size.sm, textAlign: 'center' },
   errorUrl:  { color: COLORS.textMuted, fontSize: 9, textAlign: 'center', opacity: 0.6 },
-  // Power-up Zone HD
-  revealWindow: {
+  // Power-up Zone HD — carré individuel
+  revealSquare: {
     position: 'absolute',
+    width:    SQUARE_SIZE,
+    height:   SQUARE_SIZE,
     overflow: 'hidden',
     borderWidth: 1.5,
     borderColor: COLORS.warning,

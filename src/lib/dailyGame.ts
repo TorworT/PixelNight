@@ -112,6 +112,9 @@ async function fetchAndCacheForDate(dateStr: string, category = 'games'): Promis
   }
 }
 
+/** Catégories actives de l'app — à mettre à jour si une nouvelle catégorie est ajoutée. */
+const ACTIVE_CATEGORIES = ['games', 'anime', 'dessinsanime', 'cinema'] as const;
+
 /**
  * Précharge en arrière-plan les 5 versions pixelisées (_1 à _5) d'une image .jpg.
  * Fire-and-forget — ne bloque jamais l'appelant.
@@ -121,6 +124,22 @@ function prefetchPixelizedImages(imageUrl: string): void {
   const base = imageUrl.slice(0, -4);
   const urls = [1, 2, 3, 4, 5].map((i) => `${base}_${i}.jpg`);
   Promise.all(urls.map((u) => Image.prefetch(u))).catch(() => {});
+}
+
+/**
+ * Précharge en parallèle toutes les images pixelisées (_1–_5) des jeux du jour
+ * pour toutes les catégories actives. Lit uniquement le cache AsyncStorage local —
+ * aucune requête réseau. Appelé au clic "Jouer" sans bloquer la navigation.
+ * Fire-and-forget : ne pas awaiter, ne lève jamais d'erreur.
+ */
+export function prefetchAllCategoryImages(): void {
+  Promise.all(
+    ACTIVE_CATEGORIES.map((cat) =>
+      readCache(cat)
+        .then((game) => { if (game?.imageUrl) prefetchPixelizedImages(game.imageUrl); })
+        .catch(() => {}),
+    ),
+  ).catch(() => {});
 }
 
 export async function prefetchUpcomingGames(days = 7, category = 'games'): Promise<void> {

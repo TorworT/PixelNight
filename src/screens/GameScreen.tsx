@@ -227,11 +227,11 @@ function censorTitle(title: string): string {
  *   attemptsUsed 5+ → image _1 (16px) →  25 pièces
  */
 function imageBonusCoins(attemptsUsed: number): number {
-  if (attemptsUsed <= 1) return 200;
+  if (attemptsUsed === 1) return 200;
   if (attemptsUsed === 2) return 150;
   if (attemptsUsed === 3) return 100;
   if (attemptsUsed === 4) return 50;
-  return 25;
+  return 25; // attemptsUsed >= 5
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -259,7 +259,9 @@ export function GameScreen({ onBack }: GameScreenProps) {
   const [coinsAwarded, setCoinsAwarded]  = useState(0);
   const [usingPowerup, setUsingPowerup] = useState<PowerupType | null>(null);
   const [categoryTitles, setCategoryTitles] = useState<string[]>([]);
-  const [imageLoading, setImageLoading]  = useState(true);
+  // true uniquement si l'image met plus de 300 ms à répondre (évite le spinner si cache chaud)
+  const [imageLoading, setImageLoading]  = useState(false);
+  const imageLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Abonnement actif : lu directement depuis profile.subscription_tier (Supabase).
   // Toute valeur non-free (basic/pro/legend) supprime les publicités.
@@ -282,25 +284,58 @@ export function GameScreen({ onBack }: GameScreenProps) {
     setCategoryTitles([]);
     let cancelled = false;
 
+    // game_aliases contient tous les titres jouables par catégorie.
+    // Fallback sur daily_games si la table n'existe pas encore ou retourne vide.
     supabase
-      .from('daily_games')
+      .from('game_aliases')
       .select('game_name')
       .eq('category', category)
-      .then(({ data }) => {
+      .then(async ({ data, error }) => {
         if (cancelled) return;
-        const titles = (data ?? []).map((r: { game_name: string }) => r.game_name);
+
+        if (error) {
+          if (__DEV__) console.warn('[GameScreen] game_aliases fetch error:', error.message, '— fallback daily_games');
+        }
+
+        const raw = (data ?? []).map((r: { game_name: string }) => r.game_name);
+
+        // Fallback : si game_aliases est vide ou en erreur, on interroge daily_games
+        if (raw.length === 0) {
+          if (__DEV__) console.warn('[GameScreen] game_aliases vide — fallback daily_games');
+          const { data: fallbackData } = await supabase
+            .from('daily_games')
+            .select('game_name')
+            .eq('category', category);
+          const fallbackRaw = (fallbackData ?? []).map((r: { game_name: string }) => r.game_name);
+          const fallbackTitles = [...new Set(fallbackRaw.map((t) => t.trim()))];
+          _titlesByCategory.set(category, fallbackTitles);
+          setCategoryTitles(fallbackTitles);
+          return;
+        }
+
+        // game_aliases a retourné des résultats — déduplication et mise en cache
+        const titles = [...new Set(raw.map((t) => t.trim()))];
         _titlesByCategory.set(category, titles);
         setCategoryTitles(titles);
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (__DEV__) console.warn('[GameScreen] categoryTitles fetch threw:', err);
+      });
 
     return () => { cancelled = true; };
   }, [category]);
 
-  // Réinitialise le spinner image à chaque changement d'image affichée
-  // (nouvelle tentative → nouvel attemptIndex → nouvelle URL pixelisée)
+  // Prépare le timer spinner à chaque changement d'image (nouvelle tentative ou nouveau jeu).
+  // Le spinner ne s'affiche que si l'image met plus de 300 ms à répondre —
+  // si elle est déjà en cache (prefetch réussi), elle charge en < 50 ms et le spinner
+  // n'apparaît jamais. On nettoie le timer au démontage pour éviter les fuites mémoire.
   useEffect(() => {
-    setImageLoading(true);
+    setImageLoading(false);
+    if (imageLoadingTimer.current) clearTimeout(imageLoadingTimer.current);
+    imageLoadingTimer.current = setTimeout(() => setImageLoading(true), 300);
+    return () => {
+      if (imageLoadingTimer.current) clearTimeout(imageLoadingTimer.current);
+    };
   }, [game?.id, state.attempts.length]);
 
   // Animations
@@ -417,6 +452,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
     );
 
     const imgBonus = imageBonusCoins(attemptsSnap);
+    console.log('[GameScreen] imageBonusCoins attemptsUsed:', attemptsSnap, 'bonus:', imgBonus);
 
     // ── Chemin invité : tout en local ──────────────────────────────────────
     if (isGuest) {
@@ -735,8 +771,10 @@ export function GameScreen({ onBack }: GameScreenProps) {
                   ? 6                              // révélation : image originale
                   : state.attempts.length + 1      // essai en cours : 1, 2, 3…
               }
-              onLoadStart={() => setImageLoading(true)}
-              onLoadEnd={() => setImageLoading(false)}
+              onLoadEnd={() => {
+                if (imageLoadingTimer.current) clearTimeout(imageLoadingTimer.current);
+                setImageLoading(false);
+              }}
             />
             {/* Spinner centré sur l'image pendant le chargement */}
             {imageLoading && (
@@ -813,6 +851,7 @@ export function GameScreen({ onBack }: GameScreenProps) {
             onSubmit={handleGuess}
             attemptsLeft={attemptsLeft}
             maxAttempts={state.maxAttempts}
+            category={category}
             extraTitles={categoryTitles}
             placeholder={
               category === 'anime'        ? 'Entrez un nom d\'animé…' :

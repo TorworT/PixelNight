@@ -167,6 +167,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const mountedRef = useRef(true);
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
+  /**
+   * Passe à true dès que runStartup() se termine (succès, erreur ou timeout).
+   * Permet à onAuthStateChange d'ignorer les événements qui arrivent pendant
+   * le démarrage et évite la double exécution de fetchProfile().
+   */
+  const startupDoneRef = useRef(false);
+
   // ── fetchProfile avec mise en cache ─────────────────────────────────────────
   /**
    * Charge le profil depuis Supabase + RC, met en cache, et met à jour le state.
@@ -181,6 +188,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   const fetchProfile = useCallback(async (userId: string, _retry = false): Promise<Profile | null> => {
     try {
+      console.log('[fetchProfile] START userId:', userId);
+
       // Lecture Supabase + tier RevenueCat en parallèle.
       // RC est la source de vérité pour le tier : si RC retourne un tier actif,
       // il écrase la valeur Supabase (qui peut être en retard après un achat).
@@ -189,10 +198,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         getSubscriptionTier(),
       ]);
 
+      console.log('[fetchProfile] getProfile result:', p?.pseudo, 'coins:', p?.coins, 'tier:', p?.subscription_tier);
+      console.log('[fetchProfile] rcTier:', rcTier);
+
       if (p && mountedRef.current) {
         // RC gagne si non-free ; sinon on garde la valeur Supabase
         const mergedTier = rcTier !== 'free' ? rcTier : p.subscription_tier;
+        console.log('[fetchProfile] mergedTier:', mergedTier);
         const merged = { ...p, subscription_tier: mergedTier };
+        console.log('[fetchProfile] setProfile appelé avec coins:', merged?.coins);
         setProfile(merged);
         await cacheProfile(merged).catch(() => {});
         return merged;
@@ -296,70 +310,76 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    *    garantir que setAuthLoading(false) est appelé dans tous les cas.
    */
   const runStartup = useCallback(async (): Promise<void> => {
-    // getSession() lit AsyncStorage puis tente un refresh réseau si le token est expiré.
-    const { data: { session: s }, error: sessionError } = await supabase.auth.getSession();
+    try {
+      // getSession() lit AsyncStorage puis tente un refresh réseau si le token est expiré.
+      const { data: { session: s }, error: sessionError } = await supabase.auth.getSession();
 
-    // Session explicitement invalide (refresh token expiré, révoqué, etc.)
-    if (sessionError) {
-      console.error('[AuthContext] runStartup — getSession error:', sessionError.message);
-      await supabase.auth.signOut();
-      if (mountedRef.current) { setSession(null); setAuthLoading(false); }
-      return;
-    }
+      // Session explicitement invalide (refresh token expiré, révoqué, etc.)
+      if (sessionError) {
+        console.error('[AuthContext] runStartup — getSession error:', sessionError.message);
+        await supabase.auth.signOut();
+        if (mountedRef.current) { setSession(null); setAuthLoading(false); }
+        return;
+      }
 
-    if (!mountedRef.current) return;
-    setSession(s);
+      if (!mountedRef.current) return;
+      setSession(s);
 
-    if (s?.user.id) {
-      const net = await NetInfo.fetch();
-      const online = net.isConnected !== false;
+      if (s?.user.id) {
+        const net = await NetInfo.fetch();
+        const online = net.isConnected !== false;
 
-      if (online) {
-        // getSession() gère déjà le refresh du token automatiquement quand
-        // nécessaire — un appel supplémentaire à refreshSession() créait des
-        // conflits et déconnectait les utilisateurs après chaque redémarrage.
+        if (online) {
+          // getSession() gère déjà le refresh du token automatiquement quand
+          // nécessaire — un appel supplémentaire à refreshSession() créait des
+          // conflits et déconnectait les utilisateurs après chaque redémarrage.
 
-        // En ligne : profil frais depuis Supabase (fetchProfile gère les erreurs et retries)
-        await maybeTransferGuestData(s.user.id);
-        const loadedProfile = await fetchProfile(s.user.id);
+          // En ligne : profil frais depuis Supabase (fetchProfile gère les erreurs et retries)
+          await maybeTransferGuestData(s.user.id);
+          const loadedProfile = await fetchProfile(s.user.id);
 
-        // ── Déconnexion uniquement si fetchProfile ET getProfile échouent tous les deux ──
-        // fetchProfile fait déjà 1 retry interne avant de retourner null.
-        // On ne déconnecte que si le profil est vraiment introuvable (compte supprimé).
-        if (!loadedProfile || isProfileCorrupted(loadedProfile)) {
-          console.warn('[AuthContext] runStartup — profil null après fetch+retry, déconnexion');
-          await clearAllSessionData(s.user.id);
-          await supabase.auth.signOut();
-          if (mountedRef.current) { setSession(null); setProfile(null); setAuthLoading(false); }
-          return;
+          // ── Déconnexion uniquement si fetchProfile ET getProfile échouent tous les deux ──
+          // fetchProfile fait déjà 1 retry interne avant de retourner null.
+          // On ne déconnecte que si le profil est vraiment introuvable (compte supprimé).
+          if (!loadedProfile || isProfileCorrupted(loadedProfile)) {
+            console.warn('[AuthContext] runStartup — profil null après fetch+retry, déconnexion');
+            await clearAllSessionData(s.user.id);
+            await supabase.auth.signOut();
+            if (mountedRef.current) { setSession(null); setProfile(null); setAuthLoading(false); }
+            return;
+          }
+
+          initNotifications().catch(() => {});
+          prefetchUpcomingGames().catch(() => {});
+        } else {
+          // Hors ligne : profil depuis le cache local
+          const cached = await loadCachedProfile(s.user.id);
+
+          if (isProfileCorrupted(cached)) {
+            // Cache corrompu et pas de réseau → on l'efface, l'utilisateur verra un état vide
+            // mais au prochain lancement en ligne, fetchProfile repartira proprement.
+            console.warn('[AuthContext] runStartup — cache corrompu hors ligne, effacement');
+            await removeJSON(profileCacheKey(s.user.id));
+          } else if (cached && mountedRef.current) {
+            setProfile(cached);
+          }
         }
-
-        initNotifications().catch(() => {});
-        prefetchUpcomingGames().catch(() => {});
       } else {
-        // Hors ligne : profil depuis le cache local
-        const cached = await loadCachedProfile(s.user.id);
+        // Pas de session — mode invité ou premier lancement
+        const net = await NetInfo.fetch();
+        const guestActive = await isGuestModeActive();
 
-        if (isProfileCorrupted(cached)) {
-          // Cache corrompu et pas de réseau → on l'efface, l'utilisateur verra un état vide
-          // mais au prochain lancement en ligne, fetchProfile repartira proprement.
-          console.warn('[AuthContext] runStartup — cache corrompu hors ligne, effacement');
-          await removeJSON(profileCacheKey(s.user.id));
-        } else if (cached && mountedRef.current) {
-          setProfile(cached);
+        if (guestActive) {
+          const gp = await getGuestProfile();
+          if (mountedRef.current) { setGuestProfile(gp); setIsGuest(true); }
+        } else if (net.isConnected === false) {
+          if (mountedRef.current) setOfflineStart(true);
         }
       }
-    } else {
-      // Pas de session — mode invité ou premier lancement
-      const net = await NetInfo.fetch();
-      const guestActive = await isGuestModeActive();
-
-      if (guestActive) {
-        const gp = await getGuestProfile();
-        if (mountedRef.current) { setGuestProfile(gp); setIsGuest(true); }
-      } else if (net.isConnected === false) {
-        if (mountedRef.current) setOfflineStart(true);
-      }
+    } finally {
+      // Marque le startup comme terminé dans TOUS les cas (succès, erreur, return anticipé).
+      // onAuthStateChange attend ce signal avant de traiter les événements suivants.
+      startupDoneRef.current = true;
     }
   }, [fetchProfile]);
 
@@ -394,6 +414,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Réagit aux événements login / logout (après le démarrage)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, s) => {
+        // INITIAL_SESSION est toujours géré par runStartup() — l'ignorer ici
+        // évite le double fetchProfile() et le setAuthLoading(false) prématuré.
+        if (_event === 'INITIAL_SESSION') return;
+
+        // Pendant le démarrage, les événements concurrents (ex: TOKEN_REFRESHED)
+        // sont ignorés — runStartup() est la source de vérité pour cette phase.
+        if (!startupDoneRef.current) return;
+
         if (!mountedRef.current) return;
         setSession(s);
         if (s?.user.id) {

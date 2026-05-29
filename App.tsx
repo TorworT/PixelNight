@@ -28,6 +28,9 @@ import AsyncStorage                       from '@react-native-async-storage/asyn
 import { loadJSON }                      from './src/utils/storage';
 import { loadHapticsPreference }         from './src/utils/haptics';
 import { initRevenueCat, claimDailyCoins } from './src/lib/subscription';
+import { claimWelcomeBonus, claimLoyaltyBonus } from './src/lib/profiles';
+import { WelcomeModal }                        from './src/components/WelcomeModal';
+import { LoyaltyModal }                        from './src/components/LoyaltyModal';
 
 // ─── Expo Updates ─────────────────────────────────────────────────────────────
 
@@ -281,6 +284,39 @@ interface ComingSoonInfo {
 
 function InnerApp() {
   const { session, profile, authLoading, isGuest, offlineStart, refreshProfile } = useAuthContext();
+
+  // ── Modaux bonus : dismissal local immédiat ──────────────────────────────────
+  //
+  // Le profil met quelques centaines de ms à se rafraîchir après la RPC.
+  // On ne peut pas conditionner la fermeture du modal sur profile.xxx_claimed
+  // car le modal resterait ouvert pendant tout ce délai.
+  //
+  // Solution : un flag local qui passe à true AU CLIC (avant même que refreshProfile
+  // se termine). Le modal se ferme instantanément ; refreshProfile tourne en tâche
+  // de fond pour mettre à jour les pièces/powerups affichés dans l'UI.
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [loyaltyDismissed, setLoyaltyDismissed] = useState(false);
+
+  // Conditions de base communes aux deux modaux
+  const bonusEligible = !authLoading && !!session && !isGuest && profile !== null;
+
+  // showWelcome : welcome_bonus_claimed = false → nouveau joueur.
+  // Les deux flags sont mutuellement exclusifs par construction :
+  //   • welcome = false  → WelcomeModal
+  //   • welcome = true + loyalty = false → LoyaltyModal
+  // Un ancien joueur a welcome_bonus_claimed = true (posé par la migration SQL)
+  // → il ne voit jamais ce modal.
+  const showWelcome = bonusEligible
+    && profile!.welcome_bonus_claimed === false
+    && !welcomeDismissed;
+
+  // showLoyalty : welcome_bonus_claimed = true ET loyalty_bonus_claimed = false
+  // → ancien inscrit dont le bonus fidélité n'a pas encore été réclamé.
+  const showLoyalty = bonusEligible
+    && profile!.welcome_bonus_claimed === true
+    && profile!.loyalty_bonus_claimed === false
+    && !loyaltyDismissed;
+
   const themeColors = useThemeColors();
 
   const [onboardingDone,    setOnboardingDone]    = useState<boolean | null>(null);
@@ -456,6 +492,42 @@ function InnerApp() {
       {/* ── Toast "Pièces quotidiennes" ─────────────────────────────────── */}
       {dailyCoins !== null && (
         <DailyCoinsToast coins={dailyCoins} onDismiss={() => setDailyCoins(null)} />
+      )}
+
+      {/* ── Modal bonus de bienvenue (one-shot, nouvel inscrit) ────────── */}
+      {showWelcome && (
+        <WelcomeModal
+          onClaim={async () => {
+            setWelcomeDismissed(true); // ferme le modal immédiatement (invisible pour l'user)
+            try {
+              await claimWelcomeBonus();
+            } catch {
+              // Déjà réclamé (welcome_bonus_already_claimed) ou erreur réseau :
+              // on continue quand même pour synchroniser le profil depuis Supabase.
+            } finally {
+              // refreshProfile() s'exécute TOUJOURS, même si la RPC a levé une exception.
+              // Cela garantit que profile.welcome_bonus_claimed = true est chargé depuis
+              // Supabase et mis en cache → le modal ne réapparaît pas au prochain lancement.
+              await refreshProfile();
+            }
+          }}
+        />
+      )}
+
+      {/* ── Modal bonus fidélité (one-shot, ancien inscrit) ─────────────── */}
+      {showLoyalty && (
+        <LoyaltyModal
+          onClaim={async () => {
+            setLoyaltyDismissed(true); // ferme le modal immédiatement
+            try {
+              await claimLoyaltyBonus();
+            } catch {
+              // Même logique : on rafraîchit le profil même en cas d'erreur.
+            } finally {
+              await refreshProfile();
+            }
+          }}
+        />
       )}
 
     </Animated.View>

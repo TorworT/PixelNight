@@ -336,8 +336,14 @@ export function InfiniteScreen() {
       .finally(() => setRefreshing(false));
   }, [refreshProfile]);
 
+  // Mode infini 24h acheté en boutique : infinite_until dans le futur → accès même sans Pro/Legend
+  const infiniteUntilActive = !!profile?.infinite_until
+    && new Date(profile.infinite_until).getTime() > Date.now();
+
   const hasAccess = !isGuest
-    && (profile?.subscription_tier === 'pro' || profile?.subscription_tier === 'legend');
+    && (profile?.subscription_tier === 'pro'
+        || profile?.subscription_tier === 'legend'
+        || infiniteUntilActive);
 
   // ── Données de la liste ───────────────────────────────────────────────────
   // Initialisées depuis le cache module-level : zéro flash au retour sur l'écran.

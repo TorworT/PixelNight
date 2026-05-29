@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { FONTS, SPACING, RADIUS } from '../constants/theme';
 import { useAuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { addCoins, buyItem, InventoryItemType } from '../lib/profiles';
+import { addCoins, buyItem, activateInfiniteMode, InventoryItemType } from '../lib/profiles';
 import { purchaseCoinPack } from '../lib/subscription';
 import { getTitles, getMyTitles, buyTitle, Title } from '../lib/titles';
 import { AdModal } from '../components/AdModal';
@@ -23,6 +23,17 @@ import { SubscriptionScreen } from './SubscriptionScreen';
 import { type SubscriptionTier } from '../lib/subscription';
 import { AVATARS } from '../constants/appearances';
 import type { ThemeColors } from '../constants/appearances';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Formate une durée en millisecondes sous la forme HH:MM:SS. */
+function formatCountdown(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
 // ─── Lootbox ──────────────────────────────────────────────────────────────────
 
@@ -101,19 +112,13 @@ const SHOP_ITEMS: ShopItem[] = [
     type: 'hint_zone', profileKey: 'hint_zone',
     label: 'Zone HD', icon: 'scan-outline',
     cost: 500, color: '#f59e0b',
-    desc: 'Déflou la zone centrale de l\'image pour mieux identifier le jeu.',
+    desc: 'Révèle une zone aléatoire de l\'image en haute définition pour mieux identifier le jeu.',
   },
   {
     type: 'extra_life', profileKey: 'extra_life',
     label: '+1 Vie', icon: 'heart-outline',
     cost: 400, color: '#f87171',
     desc: 'Ajoute une tentative supplémentaire si vous avez perdu la partie.',
-  },
-  {
-    type: 'skip', profileKey: 'skip',
-    label: 'Passer le jeu', icon: 'play-skip-forward-outline',
-    cost: 150, color: '#4ade80',
-    desc: 'Passe le jeu du jour sans comptabiliser de défaite.',
   },
 ];
 
@@ -189,6 +194,39 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     invQtyColorHas:   { color: colors.success },
     invQtyColorEmpty: { color: colors.textMuted },
     invEmpty: { color: colors.textMuted, fontSize: FONTS.size.xs, textAlign: 'center', padding: SPACING.md, fontStyle: 'italic' },
+
+    // Ligne Mode infini dans l'inventaire
+    invInfiniteActive: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      backgroundColor: '#a78bfa22', borderRadius: RADIUS.full,
+      borderWidth: 1, borderColor: '#a78bfa66',
+      paddingHorizontal: SPACING.sm, paddingVertical: 2,
+    },
+    invInfiniteCountdown: {
+      color: '#a78bfa', fontSize: FONTS.size.sm,
+      fontWeight: FONTS.weight.black,
+      fontVariant: ['tabular-nums'] as any,
+      fontFamily: ff ?? 'monospace',
+    },
+    invInfiniteBtn: {
+      backgroundColor: '#a78bfa',
+      borderRadius: RADIUS.full,
+      paddingHorizontal: SPACING.sm, paddingVertical: 3,
+      minWidth: 64, alignItems: 'center', justifyContent: 'center',
+    },
+    invInfiniteBtnInsuf: { backgroundColor: colors.border },
+    invInfiniteBtnText: {
+      color: '#fff', fontSize: FONTS.size.xs, fontWeight: FONTS.weight.black,
+    },
+    invInactifBadge: {
+      borderRadius: RADIUS.full, paddingHorizontal: SPACING.sm, paddingVertical: 2,
+      borderWidth: 1, borderColor: colors.border,
+      backgroundColor: colors.card, minWidth: 32, alignItems: 'center',
+    },
+    invInactifText: {
+      color: colors.textMuted, fontSize: FONTS.size.xs,
+      fontWeight: FONTS.weight.medium,
+    },
 
     // Apparences
     appearanceCard: {
@@ -449,11 +487,13 @@ export function ShopScreen() {
   const [watchingAd,        setWatchingAd]        = useState(false);
   const [adLoading,         setAdLoading]          = useState(false);
   const [buyingType,        setBuyingType]         = useState<InventoryItemType | null>(null);
+  const [justBoughtId,      setJustBoughtId]       = useState<InventoryItemType | null>(null);
   const [buyingPackId,      setBuyingPackId]       = useState<string | null>(null);
   const [showAppearances,   setShowAppearances]    = useState(false);
   const [showSubscription,  setShowSubscription]   = useState(false);
   const [toast,             setToast]              = useState<{ msg: string; ok: boolean } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const justBoughtTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Titres achetables ───────────────────────────────────────────────────────
   const [purchasableTitles, setPurchasableTitles] = useState<Title[]>([]);
@@ -541,6 +581,10 @@ export function ShopScreen() {
         await buyItem(item.type, item.cost);
         await refreshProfile();
       }
+      // Feedback visuel "✓ Acheté !" pendant 2 secondes sur le bouton de l'item
+      setJustBoughtId(item.type);
+      if (justBoughtTimer.current) clearTimeout(justBoughtTimer.current);
+      justBoughtTimer.current = setTimeout(() => setJustBoughtId(null), 2000);
       showToast(`${item.label} ajouté à l'inventaire !`, true);
     } catch (err: any) {
       if (err?.message?.includes('insufficient_coins')) {
@@ -551,7 +595,7 @@ export function ShopScreen() {
     } finally {
       setBuyingType(null);
     }
-  }, [coins, refreshProfile, showToast]);
+  }, [coins, isOnline, isGuest, refreshProfile, refreshGuestProfile, showToast]);
 
   // ── Achat d'un pack de pièces via RevenueCat ───────────────────────────────
   const handleBuyCoinPack = useCallback(async (pack: CoinPack) => {
@@ -574,6 +618,42 @@ export function ShopScreen() {
       setBuyingPackId(null);
     }
   }, [isOnline, isGuest, refreshProfile, showToast]);
+
+  // ── Mode infini 24h ────────────────────────────────────────────────────────
+  const [buyingInfinite,      setBuyingInfinite]      = useState(false);
+  const [infiniteRemainingMs, setInfiniteRemainingMs] = useState(0);
+
+  // Décompte mis à jour chaque seconde selon profile.infinite_until
+  useEffect(() => {
+    const compute = () => {
+      const until = profile?.infinite_until;
+      if (!until) { setInfiniteRemainingMs(0); return; }
+      setInfiniteRemainingMs(Math.max(0, new Date(until).getTime() - Date.now()));
+    };
+    compute();
+    const id = setInterval(compute, 1000);
+    return () => clearInterval(id);
+  }, [profile?.infinite_until]);
+
+  const handleBuyInfinite24h = useCallback(async () => {
+    if (!isOnline)    { showToast('Achat impossible hors ligne 📵', false); return; }
+    if (isGuest)      { showToast('Créez un compte pour acheter cet item', false); return; }
+    if (coins < 900)  { showToast('Pas assez de pièces 🪙', false); return; }
+    setBuyingInfinite(true);
+    try {
+      await activateInfiniteMode(); // déduit 900 pièces + pose infinite_until côté DB
+      await refreshProfile();       // recharge le profil → déclenche le décompte
+      showToast('Mode infini 24h activé ! ⏱️', true);
+    } catch (err: any) {
+      if (err?.message?.includes('insufficient_coins')) {
+        showToast('Pas assez de pièces 🪙', false);
+      } else {
+        showToast('Achat échoué — réessaie plus tard', false);
+      }
+    } finally {
+      setBuyingInfinite(false);
+    }
+  }, [isOnline, isGuest, coins, refreshProfile, showToast]);
 
   // ── Pub pour gagner des pièces ──────────────────────────────────────────────
 
@@ -720,7 +800,7 @@ export function ShopScreen() {
             return (
               <View
                 key={item.type}
-                style={[styles.invRow, i < SHOP_ITEMS.length - 1 && styles.invRowBorder]}
+                style={[styles.invRow, styles.invRowBorder]}
               >
                 <View style={[styles.invIcon, { backgroundColor: item.color + '22' }]}>
                   <Ionicons name={item.icon as any} size={18} color={item.color} />
@@ -734,11 +814,48 @@ export function ShopScreen() {
               </View>
             );
           })}
-          {SHOP_ITEMS.every((it) => (isGuest ? guestProfile?.[it.profileKey] : profile?.[it.profileKey]) === 0 || (isGuest ? guestProfile?.[it.profileKey] : profile?.[it.profileKey]) == null) && (
-            <Text style={styles.invEmpty}>
-              Votre inventaire est vide — achetez des items ci-dessous.
-            </Text>
-          )}
+
+          {/* ── Mode infini — ligne d'inventaire ──────────────────────────── */}
+          <View style={styles.invRow}>
+            <View style={[styles.invIcon, { backgroundColor: '#a78bfa22' }]}>
+              <Ionicons name="infinite-outline" size={18} color="#a78bfa" />
+            </View>
+            <Text style={styles.invLabel}>Mode infini</Text>
+
+            {infiniteRemainingMs > 0 ? (
+              /* Actif : badge chrono */
+              <View style={styles.invInfiniteActive}>
+                <Ionicons name="time-outline" size={12} color="#a78bfa" />
+                <Text style={styles.invInfiniteCountdown}>
+                  {formatCountdown(infiniteRemainingMs)}
+                </Text>
+              </View>
+            ) : isGuest ? (
+              /* Invité : pas d'achat possible */
+              <View style={styles.invInactifBadge}>
+                <Text style={styles.invInactifText}>—</Text>
+              </View>
+            ) : (
+              /* Inactif + authentifié : bouton Activer (900 🪙) */
+              <TouchableOpacity
+                style={[
+                  styles.invInfiniteBtn,
+                  coins < 900 && styles.invInfiniteBtnInsuf,
+                ]}
+                onPress={handleBuyInfinite24h}
+                disabled={buyingInfinite || coins < 900}
+                activeOpacity={0.8}
+              >
+                {buyingInfinite ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.invInfiniteBtnText}>
+                    {coins >= 900 ? 'Activer 900🪙' : 'Insuffisant'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* ── Boutique ─────────────────────────────────────────────────────── */}
@@ -750,9 +867,18 @@ export function ShopScreen() {
             item={item}
             coins={coins}
             buying={buyingType === item.type}
+            justBought={justBoughtId === item.type}
             onBuy={() => handleBuy(item)}
           />
         ))}
+
+        {/* Mode infini 24h — item spécial (hors système inventaire) */}
+        <Infinite24hCard
+          coins={coins}
+          buying={buyingInfinite}
+          remainingMs={infiniteRemainingMs}
+          onBuy={handleBuyInfinite24h}
+        />
 
         {/* ── Pack de pièces ───────────────────────────────────────────────── */}
         <SectionTitle icon="wallet-outline" label="Pack de pièces" />
@@ -831,14 +957,6 @@ export function ShopScreen() {
               )}
             </TouchableOpacity>
           </View>
-        </View>
-
-        <View style={styles.earnNote}>
-          <Ionicons name="information-circle-outline" size={13} color={colors.textMuted} />
-          <Text style={styles.earnNoteText}>
-            Vous gagnez aussi des pièces en gagnant chaque jour.{'\n'}
-            Bonus : +200🪙 à 7 jours · +500🪙 à 30 jours consécutifs !
-          </Text>
         </View>
 
         <View style={{ height: SPACING.xxl * 2 }} />
@@ -1160,11 +1278,75 @@ function LootboxShopCard({ lastClaimed, isLegend }: { lastClaimed: string | null
   );
 }
 
+// ─── Infinite24hCard ──────────────────────────────────────────────────────────
+
+function Infinite24hCard({
+  coins, buying, remainingMs, onBuy,
+}: { coins: number; buying: boolean; remainingMs: number; onBuy: () => void }) {
+  const { colors } = useTheme();
+  const card = useMemo(() => createCardStyles(colors), [colors]);
+  const COLOR      = '#a78bfa';
+  const isActive   = remainingMs > 0;
+  const canAfford  = coins >= 900;
+
+  return (
+    <View style={[card.root, { borderLeftColor: COLOR }]}>
+      <View style={[card.iconBox, { backgroundColor: COLOR + '22' }]}>
+        <Ionicons name="infinite-outline" size={22} color={COLOR} />
+      </View>
+      <View style={card.body}>
+        <Text style={card.label}>Mode infini 24h</Text>
+        <Text style={card.desc}>Accède au mode infini sans limite pendant 24h.</Text>
+        {isActive ? (
+          /* Décompte actif */
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+            <Ionicons name="time-outline" size={13} color={COLOR} />
+            <Text style={{ color: COLOR, fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] }}>
+              {formatCountdown(remainingMs)}
+            </Text>
+          </View>
+        ) : (
+          /* Prix affiché uniquement si inactif */
+          <View style={card.priceRow}>
+            <Text style={card.coinMini}>🪙</Text>
+            <Text style={[card.price, !canAfford && card.priceInsuf]}>900</Text>
+          </View>
+        )}
+      </View>
+
+      {isActive ? (
+        /* Badge "Actif" — pas de bouton */
+        <View style={{
+          borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12,
+          backgroundColor: COLOR + '22', borderWidth: 1, borderColor: COLOR + '55',
+          alignItems: 'center', justifyContent: 'center', minWidth: 80,
+        }}>
+          <Ionicons name="checkmark-circle" size={15} color={COLOR} />
+          <Text style={{ color: COLOR, fontSize: 11, fontWeight: '700', marginTop: 2 }}>Actif</Text>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={[card.btn, !canAfford && card.btnInsuf, { backgroundColor: canAfford ? COLOR : colors.border }]}
+          onPress={onBuy}
+          disabled={buying || !canAfford}
+          activeOpacity={0.8}
+        >
+          {buying ? (
+            <ActivityIndicator size="small" color={colors.text} />
+          ) : (
+            <Text style={card.btnText}>{canAfford ? 'Acheter' : 'Insuffisant'}</Text>
+          )}
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
 // ─── ItemCard ─────────────────────────────────────────────────────────────────
 
 function ItemCard({
-  item, coins, buying, onBuy,
-}: { item: ShopItem; coins: number; buying: boolean; onBuy: () => void }) {
+  item, coins, buying, justBought, onBuy,
+}: { item: ShopItem; coins: number; buying: boolean; justBought: boolean; onBuy: () => void }) {
   const { colors } = useTheme();
   const card = useMemo(() => createCardStyles(colors), [colors]);
   const canAfford = coins >= item.cost;
@@ -1181,18 +1363,25 @@ function ItemCard({
           <Text style={[card.price, !canAfford && card.priceInsuf]}>{item.cost}</Text>
         </View>
       </View>
-      <TouchableOpacity
-        style={[card.btn, !canAfford && card.btnInsuf]}
-        onPress={onBuy}
-        disabled={buying || !canAfford}
-        activeOpacity={0.8}
-      >
-        {buying ? (
-          <ActivityIndicator size="small" color={colors.text} />
-        ) : (
-          <Text style={card.btnText}>{canAfford ? 'Acheter' : 'Insuffisant'}</Text>
-        )}
-      </TouchableOpacity>
+      {justBought ? (
+        /* Feedback "✓ Acheté !" — affiché 2 secondes après un achat réussi */
+        <View style={[card.btn, { backgroundColor: colors.success }]}>
+          <Text style={[card.btnText, { color: '#fff' }]}>✓ Acheté !</Text>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={[card.btn, !canAfford && card.btnInsuf]}
+          onPress={onBuy}
+          disabled={buying || !canAfford}
+          activeOpacity={0.8}
+        >
+          {buying ? (
+            <ActivityIndicator size="small" color={colors.text} />
+          ) : (
+            <Text style={card.btnText}>{canAfford ? 'Acheter' : 'Insuffisant'}</Text>
+          )}
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

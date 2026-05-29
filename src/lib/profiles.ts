@@ -30,6 +30,12 @@ export interface Profile {
   last_lootbox_claimed_at: string | null;
   /** Timestamp de la dernière réclamation de pièces quotidiennes (null = jamais). */
   daily_coins_claimed_at: string | null;
+  /** Expiration du mode infini 24h (null = inactif, passé = expiré). */
+  infinite_until: string | null;
+  /** true si le bonus de bienvenue a déjà été réclamé (évite de le redonner). */
+  welcome_bonus_claimed: boolean;
+  /** true si le bonus de fidélité (anciens inscrits) a déjà été réclamé. */
+  loyalty_bonus_claimed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -70,6 +76,7 @@ const PROFILE_COLUMNS = [
   'active_title', 'subscription_tier',
   'referral_code', 'referred_by',
   'last_lootbox_claimed_at', 'daily_coins_claimed_at',
+  'infinite_until', 'welcome_bonus_claimed', 'loyalty_bonus_claimed',
   'created_at', 'updated_at',
 ].join(', ');
 
@@ -111,6 +118,9 @@ export async function getProfile(userId: string): Promise<Profile | null> {
   p.referred_by               = typeof p.referred_by               === 'string' ? p.referred_by               : null;
   p.last_lootbox_claimed_at   = typeof p.last_lootbox_claimed_at   === 'string' ? p.last_lootbox_claimed_at   : null;
   p.daily_coins_claimed_at    = typeof p.daily_coins_claimed_at    === 'string' ? p.daily_coins_claimed_at    : null;
+  p.infinite_until            = typeof p.infinite_until            === 'string' ? p.infinite_until            : null;
+  p.welcome_bonus_claimed     = typeof p.welcome_bonus_claimed     === 'boolean' ? p.welcome_bonus_claimed     : false;
+  p.loyalty_bonus_claimed     = typeof p.loyalty_bonus_claimed     === 'boolean' ? p.loyalty_bonus_claimed     : false;
   console.log('[profiles] getProfile OK — pseudo:', p.pseudo, 'score:', p.score_total);
   return p;
 }
@@ -135,6 +145,46 @@ export async function addCoins(amount: number): Promise<void> {
   if (error) {
     if (__DEV__) console.warn('[profiles] addCoins:', error.message);
     throw new Error(error.message ?? 'add_coins_failed');
+  }
+}
+
+/**
+ * Déduit 900 pièces et active le mode infini pour 24 heures.
+ * Retourne le timestamp d'expiration (string ISO 8601).
+ * Lève 'insufficient_coins' si le solde est insuffisant.
+ */
+export async function activateInfiniteMode(): Promise<string> {
+  const { data, error } = await supabase.rpc('activate_infinite_mode');
+  if (error) {
+    if (__DEV__) console.warn('[profiles] activateInfiniteMode:', error.message);
+    throw new Error(error.message ?? 'activate_infinite_mode_failed');
+  }
+  return data as string; // TIMESTAMPTZ retourné par la RPC
+}
+
+/**
+ * Réclame le bonus de bienvenue (one-shot).
+ * Crédite 50 pièces + 1 de chaque power-up + mode infini 24h.
+ * Lève 'welcome_bonus_already_claimed' si déjà réclamé.
+ */
+export async function claimWelcomeBonus(): Promise<void> {
+  const { error } = await supabase.rpc('claim_welcome_bonus');
+  if (error) {
+    if (__DEV__) console.warn('[profiles] claimWelcomeBonus:', error.message);
+    throw new Error(error.message ?? 'claim_welcome_bonus_failed');
+  }
+}
+
+/**
+ * Réclame le bonus de fidélité (one-shot, anciens inscrits uniquement).
+ * Crédite 100 pièces + 2 de chaque power-up + mode infini 48h.
+ * Lève 'loyalty_bonus_already_claimed' si déjà réclamé.
+ */
+export async function claimLoyaltyBonus(): Promise<void> {
+  const { error } = await supabase.rpc('claim_loyalty_bonus');
+  if (error) {
+    if (__DEV__) console.warn('[profiles] claimLoyaltyBonus:', error.message);
+    throw new Error(error.message ?? 'claim_loyalty_bonus_failed');
   }
 }
 

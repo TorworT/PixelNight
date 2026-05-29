@@ -17,6 +17,7 @@ import { getDisplayDate } from '../utils/dateUtils';
 import { FONTS, SPACING, RADIUS } from '../constants/theme';
 import { useTheme } from '../context/ThemeContext';
 import { useAuthContext } from '../context/AuthContext';
+import { prefetchAllCategoryImages } from '../lib/dailyGame';
 import type { ThemeColors } from '../constants/appearances';
 
 interface Props {
@@ -399,6 +400,10 @@ export function MainMenuScreen({ onPlay }: Props) {
 
   // ── Play handler ────────────────────────────────────────────────────────────
   const handlePlay = useCallback(() => {
+    // Précharge toutes les images pixelisées en arrière-plan avant même que
+    // l'utilisateur choisisse une catégorie — fire & forget, ne bloque pas la navigation.
+    prefetchAllCategoryImages();
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Animated.sequence([
       Animated.timing(playScale, { toValue: 0.94, duration: 90, useNativeDriver: true }),

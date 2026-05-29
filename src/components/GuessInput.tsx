@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   TextInput,
@@ -9,7 +9,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { GAME_TITLES } from '../constants/gameTitles';
 import { FONTS, SPACING, RADIUS } from '../constants/theme';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/appearances';
@@ -19,13 +18,18 @@ interface Props {
   attemptsLeft: number;
   /** Nombre total de chances pour la partie — détermine le nombre de ronds affichés. */
   maxAttempts?: number;
-  /** Titres additionnels à inclure dans l'autocomplete (ex: jeu du jour depuis Supabase). */
+  /** Catégorie active — sert à choisir l'icône dans les suggestions. */
+  category?: string;
+  /** Titres de la catégorie active chargés depuis game_aliases (GameScreen les fournit). */
   extraTitles?: string[];
   /** Titres à exclure de l'autocomplete (power-up "Éliminer ×3"). */
   excludedTitles?: string[];
   /** Placeholder du champ de saisie — adapté à la catégorie courante. */
   placeholder?: string;
 }
+
+/** Références stables pour les tableaux vides (évite les recomputations inutiles de useMemo). */
+const EMPTY_TITLES: string[] = [];
 
 function normalize(s: string) {
   return s
@@ -97,35 +101,32 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
   });
 }
 
-export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, extraTitles = [], excludedTitles = [], placeholder = 'Entrez un nom de jeu…' }: Props) {
+export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, category, extraTitles = EMPTY_TITLES, excludedTitles = EMPTY_TITLES, placeholder = 'Entrez un nom de jeu…' }: Props) {
   const [value, setValue] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const { colors, fontFamily } = useTheme();
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
 
-  // Merge local titles + Supabase title (deduped), then remove eliminated ones
+  // Titres de la catégorie active (fournis par GameScreen depuis game_aliases),
+  // après exclusion des titres éliminés par power-up.
   const allTitles = React.useMemo(() => {
-    const merged = [...GAME_TITLES];
-    for (const t of extraTitles) {
-      if (!merged.some((m) => normalize(m) === normalize(t))) {
-        merged.push(t);
-      }
-    }
     const excluded = new Set(excludedTitles.map(normalize));
-    return merged.filter((t) => !excluded.has(normalize(t)));
+    return extraTitles.filter((t) => !excluded.has(normalize(t)));
   }, [extraTitles, excludedTitles]);
 
-  const handleChange = useCallback(
-    (text: string) => {
-      setValue(text);
-      if (text.length < 2) { setSuggestions([]); return; }
-      const q = normalize(text);
-      const starts   = allTitles.filter((t) =>  normalize(t).startsWith(q));
-      const contains = allTitles.filter((t) => !normalize(t).startsWith(q) && normalize(t).includes(q));
-      setSuggestions([...starts, ...contains].slice(0, 8));
-    },
-    [allTitles],
-  );
+  // Référence stable vers allTitles pour handleChange (évite de recréer le callback à chaque frappe)
+  const allTitlesRef = useRef(allTitles);
+  allTitlesRef.current = allTitles;
+
+  const handleChange = useCallback((text: string) => {
+    setValue(text);
+    if (text.length < 2) { setSuggestions([]); return; }
+    const q = normalize(text);
+    const titles   = allTitlesRef.current;
+    const starts   = titles.filter((t) =>  normalize(t).startsWith(q));
+    const contains = titles.filter((t) => !normalize(t).startsWith(q) && normalize(t).includes(q));
+    setSuggestions([...starts, ...contains].slice(0, 8));
+  }, []); // ← dépendances vides : jamais recréé, lit toujours la dernière version via ref
 
   const pick = useCallback((title: string) => {
     setValue(title);
@@ -165,7 +166,17 @@ export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, extraTitle
                 onPress={() => pick(item)}
                 activeOpacity={0.7}
               >
-                <Ionicons name="game-controller-outline" size={13} color={colors.textMuted} />
+                <Ionicons
+                  name={
+                    category === 'anime' || category === 'dessinsanime'
+                      ? 'tv-outline'
+                      : category === 'cinema'
+                        ? 'film-outline'
+                        : 'game-controller-outline'
+                  }
+                  size={13}
+                  color={colors.textMuted}
+                />
                 <Text style={styles.suggestionText} numberOfLines={1}>{item}</Text>
               </TouchableOpacity>
             ))}
