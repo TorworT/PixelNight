@@ -39,15 +39,21 @@ const SQUARE_MARGIN  = 4; // marges min par rapport aux bords de l'image
 
 /**
  * Résout l'URI de l'image pré-pixelisée selon l'index de tentative.
- * - attemptIndex 1–5 : remplace `.jpg` par `_N.jpg`
+ * - attemptIndex 1–5 : remplace `.jpg`/`.png` par `_N.jpg`/`_N.png?v=2`
  * - attemptIndex ≥ 6 ou absent : URI originale (image révélée / pas de suffixe)
- * - URI non-jpg : inchangée dans tous les cas
+ * - URI sans extension reconnue (.jpg / .png) : inchangée dans tous les cas
+ * - ?v=2 : cache buster — force React Native à ignorer le cache disque
+ *   si les images ont été re-uploadées sur Supabase avec la même URL.
  */
 function resolvePixelUri(uri: string, attemptIndex?: number): string {
   if (attemptIndex === undefined) return uri;
-  if (!uri.toLowerCase().endsWith('.jpg')) return uri;
   if (attemptIndex >= 6) return uri;           // ≥ 6 → image originale, aucun suffixe
-  return `${uri.slice(0, -4)}_${attemptIndex}.jpg`;
+  const lower = uri.toLowerCase();
+  const ext = lower.endsWith('.jpg') ? '.jpg'
+             : lower.endsWith('.png') ? '.png'
+             : null;
+  if (!ext) return uri;                        // extension non reconnue → inchangée
+  return `${uri.slice(0, -ext.length)}_${attemptIndex}${ext}?v=2`;
 }
 
 /**
@@ -55,19 +61,21 @@ function resolvePixelUri(uri: string, attemptIndex?: number): string {
  * En cas d'erreur de chargement, bascule automatiquement sur `fallbackUri`.
  */
 export function PixelImage({ uri, blurRadius, width, height, fallbackUri, revealZone, attemptIndex, onLoadStart: onLoadStartProp, onLoadEnd: onLoadEndProp }: Props) {
-  const [loading, setLoading]           = useState(true);
-  const [hasError, setHasError]         = useState(false);
+  const [loading,        setLoading]        = useState(true);
+  const [hasError,       setHasError]       = useState(false);
   const [activeFallback, setActiveFallback] = useState(false);
   const isOnline = useNetworkStatus();
 
-  // URI effective : version pré-pixelisée si attemptIndex fourni, originale sinon.
-  // Le fallback (Steam CDN / asset local) utilise toujours l'URI originale.
+  // URI effective : pixelUri ou fallbackUri — jamais l'image originale nette.
+  // (Le fallback vers uri sans pixelisation est supprimé : sur Android il déclenche
+  // un "Pool hard cap violation" en chargeant une image pleine résolution en mémoire.)
   const pixelUri  = resolvePixelUri(uri, attemptIndex);
   const activeUri = activeFallback && fallbackUri ? fallbackUri : pixelUri;
 
-  // Si une image pré-pixelisée est chargée (pixelUri differ de uri original),
-  // le flou gaussien natif est désactivé — la pixelisation par blocs suffit.
-  const effectiveBlurRadius = pixelUri !== uri ? 0 : blurRadius;
+  // Le blur gaussien natif est désactivé — la pixelisation vient uniquement
+  // des images pré-rendues (_1.jpg–_5.jpg). Évite le "Pool hard cap violation"
+  // sur Android et les crashes mémoire en mode infini.
+  const effectiveBlurRadius = 0;
 
 
   const handleLoadStart = () => {

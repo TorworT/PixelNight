@@ -113,7 +113,7 @@ async function fetchAndCacheForDate(dateStr: string, category = 'games'): Promis
 }
 
 /** Catégories actives de l'app — à mettre à jour si une nouvelle catégorie est ajoutée. */
-const ACTIVE_CATEGORIES = ['games', 'anime', 'dessinsanime', 'cinema'] as const;
+const ACTIVE_CATEGORIES = ['games', 'anime', 'dessinsanime', 'cinema', 'SerieTv'] as const;
 
 /**
  * Précharge en arrière-plan les 5 versions pixelisées (_1 à _5) d'une image .jpg.

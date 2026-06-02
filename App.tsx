@@ -421,7 +421,7 @@ function InnerApp() {
         <CategoryScreen
           onSelectCategory={(id) => {
             // Catégories actives → lancement direct du jeu
-            if (id === 'games' || id === 'anime' || id === 'dessinsanime' || id === 'cinema') {
+            if (id === 'games' || id === 'anime' || id === 'dessinsanime' || id === 'cinema' || id === 'SerieTv') {
               goGame(id);
             } else {
               // Catégories non encore disponibles → écran "À venir"

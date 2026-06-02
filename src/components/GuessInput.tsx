@@ -168,7 +168,7 @@ export function GuessInput({ onSubmit, attemptsLeft, maxAttempts = 5, category, 
               >
                 <Ionicons
                   name={
-                    category === 'anime' || category === 'dessinsanime'
+                    category === 'anime' || category === 'dessinsanime' || category === 'SerieTv'
                       ? 'tv-outline'
                       : category === 'cinema'
                         ? 'film-outline'

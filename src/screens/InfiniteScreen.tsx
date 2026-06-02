@@ -67,10 +67,12 @@ const CATEGORY_INFO: Record<string, { label: string; emoji: string; image?: Retu
   games:        { label: 'Jeux Vidéo',   emoji: '🎮', image: require('../../assets/images/Icones/icon-games.png'),       color: '#e94560' },
   anime:        { label: 'Animé',        emoji: '⭐', image: require('../../assets/images/Icones/icon-anime.png'),        color: '#a855f7' },
   dessinsanime: { label: 'Dessin Animé', emoji: '🎨', image: require('../../assets/images/Icones/icon-dessinsanime.png'), color: '#f97316' },
+  cinema:       { label: 'Cinéma',       emoji: '🎬',                                                                     color: '#3b82f6' },
+  SerieTv:      { label: 'Série TV',     emoji: '📺',                                                                     color: '#06b6d4' },
 };
 
 /** Catégories récupérées depuis Supabase. */
-const ALL_CATEGORIES = ['games', 'anime', 'dessinsanime'] as const;
+const ALL_CATEGORIES = ['games', 'anime', 'dessinsanime', 'cinema', 'SerieTv'] as const;
 
 const INITIAL_GS: InfiniteGameState = {
   attempts:             [],
@@ -704,9 +706,14 @@ export function InfiniteScreen() {
           <Animated.View style={{ transform: [{ translateX: shakeX }] }}>
             <PixelImage
               uri={game.imageUrl}
-              blurRadius={blurRadius}
+              blurRadius={0}
               width={imgW}
               height={imgH}
+              attemptIndex={
+                gs.status === 'won' || gs.status === 'lost'
+                  ? 6                        // partie terminée → image originale nette
+                  : gs.attempts.length + 1   // en cours → version pixelisée _N.jpg
+              }
             />
           </Animated.View>
 
@@ -727,8 +734,10 @@ export function InfiniteScreen() {
               attemptsLeft={attemptsLeft}
               extraTitles={allTitles}
               placeholder={
-                selectedRow.category === 'anime'        ? 'Entrez un nom d\'animé…' :
+                selectedRow.category === 'anime'        ? 'Entrez un nom d\'animé…'        :
                 selectedRow.category === 'dessinsanime' ? 'Entrez un nom de dessin animé…' :
+                selectedRow.category === 'cinema'       ? 'Entrez un titre de film…'        :
+                selectedRow.category === 'SerieTv'      ? 'Entrez un nom de série…'         :
                                                           'Entrez un nom de jeu…'
               }
             />
@@ -856,6 +865,10 @@ export function InfiniteScreen() {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           stickySectionHeadersEnabled={false}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={5}
+          windowSize={5}
+          initialNumToRender={8}
           renderSectionHeader={({ section }) => (
             <Text style={styles.sectionHeader}>{section.title}</Text>
           )}
@@ -1061,13 +1074,14 @@ function PastGameCard({ row, result, onPress, styles, colors }: PastGameCardProp
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.75}>
 
-      {/* Miniature — floue si pas encore jouée, nette si déjà vue */}
+      {/* Miniature — pixelisée (_1.jpg) si pas encore jouée, originale si déjà vue */}
       <View style={styles.cardThumb}>
         <PixelImage
           uri={resolveImageUrl(row.image_url, row.category)}
-          blurRadius={result ? 0 : 22}
+          blurRadius={0}
           width={64}
           height={44}
+          attemptIndex={result ? 6 : 1}
         />
       </View>
 

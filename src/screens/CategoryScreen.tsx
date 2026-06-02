@@ -39,7 +39,8 @@ interface Category {
 
 /** Dates de déverrouillage automatique (heure locale). */
 const LAUNCH_DATES: Record<string, Date> = {
-  cinema: new Date(2026, 5, 1, 7, 0, 0), // 1er juin 2026 à 07h00 local
+  cinema:  new Date(2026, 5, 1, 7, 0, 0), // 1er juin 2026 à 07h00 local
+  SerieTv: new Date(2026, 5, 1, 7, 0, 0), // 1er juin 2026 à 07h00 local
 };
 
 /** Retourne true si la catégorie est déverrouillée à l'instant présent. */
@@ -371,12 +372,13 @@ export function CategoryScreen({ onSelectCategory, onBack }: Props) {
       launchLabel: isLaunched('cinema') ? undefined : '🔜 1er juin',
     },
     {
-      id:       'serie',
-      emoji:    '📺',
-      title:    'Série TV',
-      subtitle: 'Bientôt disponible',
-      color:    '#06b6d4',
-      available: false,
+      id:          'SerieTv',
+      emoji:       '📺',
+      title:       'Série TV',
+      subtitle:    'Retrouve les séries pixelisées !',
+      color:       '#06b6d4',
+      available:   isLaunched('SerieTv'),
+      launchLabel: isLaunched('SerieTv') ? undefined : '🔜 1er juin',
     },
     {
       id:       'logo',
