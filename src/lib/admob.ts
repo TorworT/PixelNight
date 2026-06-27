@@ -21,13 +21,16 @@ export const IS_EXPO_GO =
  * invalider le compte AdMob avec des clics de test.
  * En production chaque placement a son propre Ad Unit ID.
  */
-const TEST_REWARDED_ID = 'ca-app-pub-3940256099942544/5224354917'; // Google test rewarded
+const TEST_REWARDED_ID     = 'ca-app-pub-3940256099942544/5224354917'; // Google test rewarded
+const TEST_INTERSTITIAL_ID = 'ca-app-pub-3940256099942544/1033173712'; // Google test interstitial
 
 const AD_UNIT = {
   /** Pub boutique : récompense +25 pièces. */
-  coins: __DEV__ ? TEST_REWARDED_ID : 'ca-app-pub-5431544837646381/7251937110',
+  coins:   __DEV__ ? TEST_REWARDED_ID     : 'ca-app-pub-5431544837646381/7251937110',
   /** Pub indice   : récompense 1 hint révélé. */
-  hint:  __DEV__ ? TEST_REWARDED_ID : 'ca-app-pub-5431544837646381/5496002319',
+  hint:    __DEV__ ? TEST_REWARDED_ID     : 'ca-app-pub-5431544837646381/5496002319',
+  /** Interstitiel automatique toutes les 3 tentatives (users free). */
+  autoPub: __DEV__ ? TEST_INTERSTITIAL_ID : 'ca-app-pub-5431544837646381/4165049245',
 } as const;
 
 // ─── Fonction interne partagée ────────────────────────────────────────────────
@@ -118,4 +121,35 @@ export function showRewardedAdCoins(): Promise<boolean> {
  */
 export function showRewardedAdHint(): Promise<boolean> {
   return _showRewarded(AD_UNIT.hint);
+}
+
+/**
+ * Affiche l'interstitiel automatique (PixelNight AutoPub) après chaque 3ème tentative.
+ * Ad Unit : ca-app-pub-5431544837646381/4165049245
+ * Fire-and-forget — ne rejette jamais, ne retourne rien.
+ */
+export async function showInterstitialAd(): Promise<void> {
+  console.log(`[AutoPub] showInterstitialAd() appelé — IS_EXPO_GO=${IS_EXPO_GO}`);
+  if (IS_EXPO_GO) {
+    console.log('[AutoPub] IS_EXPO_GO=true → pub ignorée (Expo Go ne supporte pas AdMob natif)');
+    return;
+  }
+  try {
+    const { InterstitialAd, AdEventType } = require('react-native-google-mobile-ads');
+    const ad = InterstitialAd.createForAdRequest(AD_UNIT.autoPub, {
+      requestNonPersonalizedAdsOnly: true,
+    });
+    await new Promise<void>((resolve) => {
+      const unsub: (() => void)[] = [];
+      const cleanup = () => unsub.forEach((u) => u());
+
+      unsub.push(ad.addAdEventListener(AdEventType.LOADED, () => {
+        ad.show().catch(resolve);
+      }));
+      unsub.push(ad.addAdEventListener(AdEventType.CLOSED, () => { cleanup(); resolve(); }));
+      unsub.push(ad.addAdEventListener(AdEventType.ERROR,  () => { cleanup(); resolve(); }));
+
+      ad.load();
+    });
+  } catch { /* silent — pub non disponible */ }
 }

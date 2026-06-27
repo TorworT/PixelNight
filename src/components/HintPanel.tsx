@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useMemo, useRef, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Game } from '../constants/games';
 import { FONTS, SPACING, RADIUS } from '../constants/theme';
@@ -56,6 +56,7 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     },
     hintBadgeText: { color: '#000', fontSize: FONTS.size.xs, fontWeight: FONTS.weight.black },
     hintText: { color: colors.text, fontSize: FONTS.size.sm, flex: 1, lineHeight: 20 },
+
     adBtn: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -68,7 +69,26 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
       borderWidth: 1,
       borderColor: '#9f5cff',
     },
-    adBtnText: { color: colors.text, fontSize: FONTS.size.sm, fontWeight: FONTS.weight.medium },
+    adBtnText: { color: colors.text, fontSize: FONTS.size.sm, fontWeight: FONTS.weight.medium, flex: 1 },
+
+    costBadgeFree: {
+      backgroundColor: '#16a34a',
+      borderRadius: RADIUS.sm,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+    },
+    costBadgePub: {
+      backgroundColor: '#7c3aed',
+      borderRadius: RADIUS.sm,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+    },
+    costBadgeText: {
+      color: '#fff',
+      fontSize: FONTS.size.xs,
+      fontWeight: FONTS.weight.bold,
+    },
+
     allDone: {
       color: colors.textMuted, fontSize: FONTS.size.xs, textAlign: 'center', fontStyle: 'italic',
     },
@@ -78,6 +98,20 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
 export function HintPanel({ game, hintsRevealed, canGetHint, onRequestHint, adFree = false }: Props) {
   const { colors, fontFamily } = useTheme();
   const styles = useMemo(() => createStyles(colors, fontFamily), [colors, fontFamily]);
+
+  // Indice 1 & 2 → gratuit ; indice 3 → pub (sauf abonné)
+  const nextHintIsFree = adFree || hintsRevealed < 2;
+
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(scale, { toValue: 1.15, duration: 500, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 1,    duration: 500, useNativeDriver: true }),
+      ]),
+    ).start();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={styles.container}>
@@ -98,10 +132,22 @@ export function HintPanel({ game, hintsRevealed, canGetHint, onRequestHint, adFr
 
       {canGetHint && (
         <TouchableOpacity style={styles.adBtn} onPress={onRequestHint} activeOpacity={0.8}>
-          <Ionicons name={adFree ? 'bulb-outline' : 'play-circle-outline'} size={17} color={colors.text} />
-          <Text style={styles.adBtnText}>
-            {adFree ? 'Révéler un indice' : 'Regarder une pub pour un indice'}
-          </Text>
+          <Ionicons
+            name={nextHintIsFree ? 'bulb-outline' : 'play-circle-outline'}
+            size={17}
+            color={colors.text}
+          />
+          <Text style={styles.adBtnText}>Révéler un indice</Text>
+          <Animated.View
+            style={[
+              nextHintIsFree ? styles.costBadgeFree : styles.costBadgePub,
+              { transform: [{ scale }] },
+            ]}
+          >
+            <Text style={styles.costBadgeText}>
+              {nextHintIsFree ? 'Gratuit' : 'Pub'}
+            </Text>
+          </Animated.View>
         </TouchableOpacity>
       )}
 

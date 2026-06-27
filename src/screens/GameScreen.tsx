@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   View,
   Text,
+  Image,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
@@ -19,7 +20,7 @@ import { GuessInput } from '../components/GuessInput';
 import { AttemptsList } from '../components/AttemptsList';
 import { HintPanel } from '../components/HintPanel';
 import { AdModal } from '../components/AdModal';
-import { IS_EXPO_GO, showRewardedAdCoins, showRewardedAdHint } from '../lib/admob';
+import { IS_EXPO_GO, showRewardedAdCoins, showRewardedAdHint, showInterstitialAd } from '../lib/admob';
 import { ResultModal } from '../components/ResultModal';
 import { getDisplayDate } from '../utils/dateUtils';
 import { playVictorySound, playDefeatSound } from '../utils/pixelSound';
@@ -51,6 +52,26 @@ import { FlameStreak } from '../components/FlameStreak';
 // Cache module-level : évite de requêter Supabase à chaque switch d'onglet.
 // Clé = nom de la catégorie, valeur = liste des game_name.
 const _titlesByCategory = new Map<string, string[]>();
+
+// Clés "gameId-seuil" déjà déclenchées — module-level, persiste tant que l'app
+// n'est pas killed. Empêche tout redéclenchement peu importe les remontages.
+const adThresholdsTriggered = new Set<string>();
+
+const CATEGORY_ICON: Record<string, { img: ReturnType<typeof require> } | { emoji: string }> = {
+  games:        { img: require('../../assets/images/Icones/icon-games.png') },
+  anime:        { img: require('../../assets/images/Icones/icon-anime.png') },
+  dessinsanime: { img: require('../../assets/images/Icones/icon-dessinsanime.png') },
+  cinema:       { emoji: '🎬' },
+  SerieTv:      { emoji: '📺' },
+};
+
+const CATEGORY_NAME: Record<string, string> = {
+  games:        'Jeux Vidéos',
+  anime:        'Animés',
+  dessinsanime: 'Dessins Animés',
+  cinema:       'Cinéma',
+  SerieTv:      'Série TV',
+};
 
 type AdContext = 'hint' | 'extra' | 'coins' | null;
 
@@ -130,7 +151,9 @@ function createStyles(colors: ThemeColors, ff: string | undefined) {
     },
     title:       { color: colors.text, fontSize: FONTS.size.xxl, fontWeight: FONTS.weight.black, letterSpacing: 2, fontFamily: ff ?? 'monospace' },
     titleAccent: { color: colors.accent },
-    dateLabel:   { color: colors.textMuted, fontSize: FONTS.size.xs, marginTop: 2, textTransform: 'capitalize' },
+    dateLabelRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+    dateLabel:   { color: colors.textMuted, fontSize: FONTS.size.xs, textTransform: 'capitalize' },
+    catIcon:     { width: 14, height: 14, resizeMode: 'contain' },
 
     coinBadge:   { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.card, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: colors.warning + '55', paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs },
     coinEmoji:   { fontSize: 13 },
@@ -630,6 +653,45 @@ export function GameScreen({ onBack }: GameScreenProps) {
     }
   }, [isSubscribed, applyAdReward, showToast]);
 
+  /**
+   * Indice 1 & 2 → gratuits (watchAdForHint direct, aucune pub).
+   * Indice 3     → pub récompensée PixelNight Hint (ou gratuit si abonné).
+   */
+  const handleRequestHint = useCallback(() => {
+    if (state.hintsRevealed < 2) {
+      watchAdForHint();
+    } else {
+      requestAdForCtx('hint');
+    }
+  }, [state.hintsRevealed, watchAdForHint, requestAdForCtx]);
+
+  // ── Interstitiel automatique toutes les 3 tentatives (users free uniquement) ──
+  // adThresholdsTriggered (Set module-level) garantit l'unicité par gameId+seuil,
+  // peu importe combien de fois le composant se remonte.
+  useEffect(() => {
+    const count    = state.attempts.length;
+    const gameKey  = game?.id ?? 'unknown';
+    const triggerKey = `${gameKey}-${Math.floor(count / 3) * 3}`;
+
+    console.log(`[AutoPub] attempts=${count} status=${state.status} isSubscribed=${isSubscribed} key=${triggerKey} alreadyDone=${adThresholdsTriggered.has(triggerKey)}`);
+
+    if (
+      count > 0 &&
+      count % 3 === 0 &&
+      !adThresholdsTriggered.has(triggerKey) &&
+      !isSubscribed &&
+      state.status === 'playing'
+    ) {
+      adThresholdsTriggered.add(triggerKey);
+      console.log('[AutoPub] TRIGGER unique pour', triggerKey);
+      showInterstitialAd()
+        .then(() => console.log('[AutoPub] showInterstitialAd() terminé'))
+        .catch((e) => console.warn('[AutoPub] showInterstitialAd() erreur :', e));
+    } else {
+      console.log('[AutoPub] bloqué — déjà déclenché pour', triggerKey, 'ou conditions non remplies');
+    }
+  }, [state.attempts.length, isSubscribed, state.status, game?.id]);
+
   // ── Utiliser un power-up depuis l'inventaire ──────────────────────────────
   const handlePowerup = useCallback(async (def: PowerupDef) => {
     const stock = getStock(effectiveProfile, def.inventoryKey);
@@ -750,7 +812,19 @@ export function GameScreen({ onBack }: GameScreenProps) {
               <Text style={styles.title}>
                 {'<'}PIXEL<Text style={styles.titleAccent}>NIGHT</Text>{'>'}
               </Text>
-              <Text style={styles.dateLabel}>{getDisplayDate()}</Text>
+              <View style={styles.dateLabelRow}>
+                <Text style={styles.dateLabel}>{getDisplayDate()}</Text>
+                {category && CATEGORY_ICON[category] && (
+                  <>
+                    <Text style={styles.dateLabel}>{'  ·  '}</Text>
+                    {'img' in CATEGORY_ICON[category]
+                      ? <Image source={(CATEGORY_ICON[category] as { img: ReturnType<typeof require> }).img} style={styles.catIcon} />
+                      : <Text style={styles.dateLabel}>{(CATEGORY_ICON[category] as { emoji: string }).emoji}</Text>
+                    }
+                    <Text style={styles.dateLabel}>{' '}{CATEGORY_NAME[category] ?? category}</Text>
+                  </>
+                )}
+              </View>
             </View>
           </View>
           <View style={styles.headerRight} />
@@ -867,14 +941,14 @@ export function GameScreen({ onBack }: GameScreenProps) {
             game={game}
             hintsRevealed={state.hintsRevealed}
             canGetHint={canGetHint}
-            onRequestHint={() => requestAdForCtx('hint')}
+            onRequestHint={handleRequestHint}
             adFree={isSubscribed}
           />
         )}
 
         {/* First-time hint CTA */}
         {state.hintsRevealed === 0 && canGetHint && state.attempts.length === 0 && (
-          <TouchableOpacity style={styles.hintCta} onPress={() => requestAdForCtx('hint')} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.hintCta} onPress={handleRequestHint} activeOpacity={0.8}>
             <Ionicons name="bulb-outline" size={15} color={colors.warning} />
             <Text style={styles.hintCtaText}>
               {isSubscribed ? 'Obtenir un indice' : 'Obtenir un indice (pub)'}

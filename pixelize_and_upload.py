@@ -84,7 +84,7 @@ def upload(bucket: str, path: str, data: bytes) -> tuple[bool, str]:
     try:
         r = requests.post(
             _url(bucket, path),
-            headers=_headers('image/jpeg'),
+            headers={**_headers('image/jpeg'), 'x-upsert': 'true'},
             data=data,
             timeout=60,
         )
@@ -109,7 +109,7 @@ def pixelize(img: Image.Image, block: int) -> bytes:
 
 # ─── Collecte ─────────────────────────────────────────────────────────────────
 
-def collect(category_filter: str | None = None) -> list[tuple[Path, str, str]]:
+def collect(category_filter: str | None = None, file_filter: str | None = None) -> list[tuple[Path, str, str]]:
     """
     Retourne la liste de toutes les images sources :
       (chemin_local, bucket, chemin_base_dans_bucket)
@@ -135,6 +135,8 @@ def collect(category_filter: str | None = None) -> list[tuple[Path, str, str]]:
                 continue
             if _SUFFIX_RE.search(f.stem):
                 continue   # deja une version pixelisee
+            if file_filter and f.stem.lower() != file_filter.lower():
+                continue   # filtre --file
 
             # Mois = dossier parent direct dans src_root (ex: "Août")
             month_raw = f.parent.name
@@ -172,6 +174,15 @@ def main() -> None:
             print(f'Erreur : categorie inconnue "{category_filter}". Valeurs valides : {", ".join(valid)}')
             sys.exit(1)
 
+    # --file <stem> : traite uniquement le fichier dont le stem correspond (sans extension)
+    file_filter: str | None = None
+    if '--file' in sys.argv:
+        idx = sys.argv.index('--file')
+        if idx + 1 >= len(sys.argv):
+            print('Erreur : --file requiert un argument (ex: --file Squad).')
+            sys.exit(1)
+        file_filter = sys.argv[idx + 1]
+
     if not SUPABASE_SERVICE_KEY:
         print('Erreur : SUPABASE_SERVICE_KEY non defini.')
         print('  Windows : set SUPABASE_SERVICE_KEY=eyJhbGci...')
@@ -182,9 +193,11 @@ def main() -> None:
         print('Mode DRY-RUN - aucune image generee ni uploadee.\n')
     if category_filter:
         print(f'Filtre actif : categorie "{category_filter}" uniquement.\n')
+    if file_filter:
+        print(f'Filtre actif : fichier "{file_filter}" uniquement.\n')
 
     print('Collecte des images...')
-    tasks = collect(category_filter)
+    tasks = collect(category_filter, file_filter)
     total = len(tasks) * 5
     print(f'{len(tasks)} images sources -> {total} fichiers\n')
 
